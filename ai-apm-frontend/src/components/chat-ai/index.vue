@@ -9,7 +9,7 @@
     <template slot="title">
       <div class="title-head">
         <div class="flex-h">
-          <img src="/src/assets/img/chatai/chat_star.svg" class="chat-star" />{{ $t('modules.components.chat-ai.s_10353d70') }}
+          <img :src="chatStarIcon" class="chat-star" />{{ $t('modules.components.chat-ai.s_10353d70') }}
         </div>
         <div class="flex-h">
           <span
@@ -36,7 +36,7 @@
         </div>
       </div>
 
-      <img src="/src/assets/img/chatai/chat_bg.svg" class="chat-bg" />
+      <img :src="chatBgIcon" class="chat-bg" />
     </template>
 
     <!-- <div class="timestamp"><span>{{ $t('modules.components.chat-ai.s_8fc3a8a9') }}</span></div> -->
@@ -115,6 +115,8 @@ import { v4 as uuidv4 } from 'uuid';
 import MarkedView from '@/components/marked-view.vue';
 import { toAsyncWait } from '@/utils/common';
 import AlarmApi from '@/api/alarm';
+import chatStarIcon from '@/assets/img/chatai/chat_star.svg';
+import chatBgIcon from '@/assets/img/chatai/chat_bg.svg';
 
 @Component({
   components: {
@@ -133,6 +135,8 @@ export default class ChatAI extends Vue {
   private showChat = false;
   private isLoading = false;
   private firstLoad = true;
+  private chatStarIcon = chatStarIcon;
+  private chatBgIcon = chatBgIcon;
 
   private showThoughtProcess = false;
 

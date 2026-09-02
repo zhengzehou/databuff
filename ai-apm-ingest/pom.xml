@@ -71,6 +71,10 @@
             <artifactId>disruptor</artifactId>
         </dependency>
         <dependency>
+            <groupId>org.apache.kafka</groupId>
+            <artifactId>kafka-clients</artifactId>
+        </dependency>
+        <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
@@ -139,6 +143,7 @@
                         <exclude>**/AiApmIngestApplication.class</exclude>
                         <exclude>**/IngestPipelineConfiguration.class</exclude>
                         <exclude>**/OtlpReceiverConfiguration.class</exclude>
+                        <exclude>**/OtlpKafkaReceiverConfiguration.class</exclude>
                         <exclude>**/OtlpGrpcServer.class</exclude>
                         <exclude>**/OtlpGrpcServer$*.class</exclude>
                         <exclude>**/SkyWalkingGrpcServer.class</exclude>

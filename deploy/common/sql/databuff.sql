@@ -27,7 +27,7 @@ CREATE TABLE meta_service (
 ) ENGINE=OLAP
 UNIQUE KEY(`id`)
 DISTRIBUTED BY HASH(`id`) BUCKETS 8
-PROPERTIES ("replication_num" = "1");
+PROPERTIES ("replication_num" = "3");
 
 -- trace
 CREATE TABLE trace_dc_span (
@@ -71,7 +71,7 @@ DUPLICATE KEY(`minutes`, `serviceId`, `resource`)
 PARTITION BY RANGE(`startTime`) ()
 DISTRIBUTED BY HASH(`trace_id`) BUCKETS 3
 PROPERTIES (
-  "replication_num" = "1",
+  "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
   "dynamic_partition.start" = "-30",
@@ -101,7 +101,7 @@ DUPLICATE KEY(`log_time`, `service_id`, `service`)
 PARTITION BY RANGE(`log_time`) ()
 DISTRIBUTED BY HASH(`trace_id`) BUCKETS 3
 PROPERTIES (
-  "replication_num" = "1",
+  "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
   "dynamic_partition.start" = "-30",
@@ -156,7 +156,7 @@ AGGREGATE KEY(`metric_time`, `ts`, `instance`, `service`, `service_id`, `service
 PARTITION BY RANGE(`metric_time`) ()
 DISTRIBUTED BY HASH(`service_id`) BUCKETS 3
 PROPERTIES (
-  "replication_num" = "1",
+  "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
   "dynamic_partition.start" = "-30",
@@ -194,7 +194,7 @@ AGGREGATE KEY(`metric_time`, `ts`, `errorType`, `service`, `service_id`, `servic
 PARTITION BY RANGE(`metric_time`) ()
 DISTRIBUTED BY HASH(`service_id`) BUCKETS 3
 PROPERTIES (
-  "replication_num" = "1",
+  "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
   "dynamic_partition.start" = "-30",
@@ -246,7 +246,7 @@ AGGREGATE KEY(`metric_time`, `ts`, `config.type`, `durationRange`, `isIn`, `isOu
 PARTITION BY RANGE(`metric_time`) ()
 DISTRIBUTED BY HASH(`service_id`) BUCKETS 3
 PROPERTIES (
-  "replication_num" = "1",
+  "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
   "dynamic_partition.start" = "-30",
@@ -271,7 +271,7 @@ AGGREGATE KEY(`metric_time`, `ts`, `service`, `serviceCode`, `service_id`, `serv
 PARTITION BY RANGE(`metric_time`) ()
 DISTRIBUTED BY HASH(`service_id`) BUCKETS 3
 PROPERTIES (
-  "replication_num" = "1",
+  "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
   "dynamic_partition.start" = "-30",
@@ -334,7 +334,7 @@ AGGREGATE KEY(`metric_time`, `ts`, `dbType`, `durationRange`, `isIn`, `isOut`, `
 PARTITION BY RANGE(`metric_time`) ()
 DISTRIBUTED BY HASH(`service_id`) BUCKETS 3
 PROPERTIES (
-  "replication_num" = "1",
+  "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
   "dynamic_partition.start" = "-30",
@@ -372,7 +372,7 @@ AGGREGATE KEY(`metric_time`, `ts`, `connectionPoolDbType`, `connectionPoolName`,
 PARTITION BY RANGE(`metric_time`) ()
 DISTRIBUTED BY HASH(`service_id`) BUCKETS 3
 PROPERTIES (
-  "replication_num" = "1",
+  "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
   "dynamic_partition.start" = "-30",
@@ -398,7 +398,7 @@ AGGREGATE KEY(`metric_time`, `ts`, `connectionPoolName`, `service`, `service_id`
 PARTITION BY RANGE(`metric_time`) ()
 DISTRIBUTED BY HASH(`service_id`) BUCKETS 3
 PROPERTIES (
-  "replication_num" = "1",
+  "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
   "dynamic_partition.start" = "-30",
@@ -442,7 +442,7 @@ AGGREGATE KEY(`metric_time`, `ts`, `componentService`, `componentServiceId`, `co
 PARTITION BY RANGE(`metric_time`) ()
 DISTRIBUTED BY HASH(`service_id`) BUCKETS 3
 PROPERTIES (
-  "replication_num" = "1",
+  "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
   "dynamic_partition.start" = "-30",
@@ -489,7 +489,7 @@ AGGREGATE KEY(`metric_time`, `ts`, `entryInterfacePathId`, `entryPathId`, `inter
 PARTITION BY RANGE(`metric_time`) ()
 DISTRIBUTED BY HASH(`service_id`) BUCKETS 3
 PROPERTIES (
-  "replication_num" = "1",
+  "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
   "dynamic_partition.start" = "-30",
@@ -526,7 +526,7 @@ AGGREGATE KEY(`metric_time`, `ts`, `convergenceType`, `gid`, `host`, `level`, `p
 PARTITION BY RANGE(`metric_time`) ()
 DISTRIBUTED BY HASH(`service_id`) BUCKETS 3
 PROPERTIES (
-  "replication_num" = "1",
+  "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
   "dynamic_partition.start" = "-30",
@@ -585,7 +585,7 @@ AGGREGATE KEY(`metric_time`, `ts`, `durationRange`, `httpCode`, `httpMethod`, `i
 PARTITION BY RANGE(`metric_time`) ()
 DISTRIBUTED BY HASH(`service_id`) BUCKETS 3
 PROPERTIES (
-  "replication_num" = "1",
+  "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
   "dynamic_partition.start" = "-30",
@@ -613,7 +613,7 @@ AGGREGATE KEY(`metric_time`, `ts`, `httpConnectionPoolName`, `service`, `service
 PARTITION BY RANGE(`metric_time`) ()
 DISTRIBUTED BY HASH(`service_id`) BUCKETS 3
 PROPERTIES (
-  "replication_num" = "1",
+  "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
   "dynamic_partition.start" = "-30",
@@ -639,7 +639,7 @@ AGGREGATE KEY(`metric_time`, `ts`, `httpConnectionPoolName`, `service`, `service
 PARTITION BY RANGE(`metric_time`) ()
 DISTRIBUTED BY HASH(`service_id`) BUCKETS 3
 PROPERTIES (
-  "replication_num" = "1",
+  "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
   "dynamic_partition.start" = "-30",
@@ -694,7 +694,7 @@ AGGREGATE KEY(`metric_time`, `ts`, `biz_pid_id`, `containerId`, `containerName`,
 PARTITION BY RANGE(`metric_time`) ()
 DISTRIBUTED BY HASH(`service_id`) BUCKETS 3
 PROPERTIES (
-  "replication_num" = "1",
+  "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
   "dynamic_partition.start" = "-30",
@@ -720,7 +720,7 @@ AGGREGATE KEY(`metric_time`, `ts`, `service`, `serviceCode`, `service_id`, `serv
 PARTITION BY RANGE(`metric_time`) ()
 DISTRIBUTED BY HASH(`service_id`) BUCKETS 3
 PROPERTIES (
-  "replication_num" = "1",
+  "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
   "dynamic_partition.start" = "-30",
@@ -747,7 +747,7 @@ AGGREGATE KEY(`metric_time`, `ts`, `service`, `serviceCode`, `service_id`, `serv
 PARTITION BY RANGE(`metric_time`) ()
 DISTRIBUTED BY HASH(`service_id`) BUCKETS 3
 PROPERTIES (
-  "replication_num" = "1",
+  "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
   "dynamic_partition.start" = "-30",
@@ -810,7 +810,7 @@ AGGREGATE KEY(`metric_time`, `ts`, `broker`, `durationRange`, `group`, `isConsum
 PARTITION BY RANGE(`metric_time`) ()
 DISTRIBUTED BY HASH(`service_id`) BUCKETS 3
 PROPERTIES (
-  "replication_num" = "1",
+  "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
   "dynamic_partition.start" = "-30",
@@ -836,7 +836,7 @@ AGGREGATE KEY(`metric_time`, `ts`, `service`, `serviceCode`, `service_id`, `serv
 PARTITION BY RANGE(`metric_time`) ()
 DISTRIBUTED BY HASH(`service_id`) BUCKETS 3
 PROPERTIES (
-  "replication_num" = "1",
+  "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
   "dynamic_partition.start" = "-30",
@@ -867,7 +867,7 @@ AGGREGATE KEY(`metric_time`, `ts`, `objectPoolFairness`, `objectPoolName`, `obje
 PARTITION BY RANGE(`metric_time`) ()
 DISTRIBUTED BY HASH(`service_id`) BUCKETS 3
 PROPERTIES (
-  "replication_num" = "1",
+  "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
   "dynamic_partition.start" = "-30",
@@ -893,7 +893,7 @@ AGGREGATE KEY(`metric_time`, `ts`, `objectPoolName`, `service`, `service_id`, `s
 PARTITION BY RANGE(`metric_time`) ()
 DISTRIBUTED BY HASH(`service_id`) BUCKETS 3
 PROPERTIES (
-  "replication_num" = "1",
+  "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
   "dynamic_partition.start" = "-30",
@@ -945,7 +945,7 @@ AGGREGATE KEY(`metric_time`, `ts`, `command`, `durationRange`, `isIn`, `isOut`, 
 PARTITION BY RANGE(`metric_time`) ()
 DISTRIBUTED BY HASH(`service_id`) BUCKETS 3
 PROPERTIES (
-  "replication_num" = "1",
+  "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
   "dynamic_partition.start" = "-30",
@@ -1002,7 +1002,7 @@ AGGREGATE KEY(`metric_time`, `ts`, `durationRange`, `isIn`, `isOut`, `resource`,
 PARTITION BY RANGE(`metric_time`) ()
 DISTRIBUTED BY HASH(`service_id`) BUCKETS 3
 PROPERTIES (
-  "replication_num" = "1",
+  "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
   "dynamic_partition.start" = "-30",
@@ -1057,7 +1057,7 @@ AGGREGATE KEY(`metric_time`, `ts`, `durationRange`, `isIn`, `isOut`, `resource`,
 PARTITION BY RANGE(`metric_time`) ()
 DISTRIBUTED BY HASH(`service_id`) BUCKETS 3
 PROPERTIES (
-  "replication_num" = "1",
+  "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
   "dynamic_partition.start" = "-30",
@@ -1083,7 +1083,7 @@ AGGREGATE KEY(`metric_time`, `ts`, `service`, `serviceCode`, `service_id`, `serv
 PARTITION BY RANGE(`metric_time`) ()
 DISTRIBUTED BY HASH(`service_id`) BUCKETS 3
 PROPERTIES (
-  "replication_num" = "1",
+  "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
   "dynamic_partition.start" = "-30",
@@ -1116,7 +1116,7 @@ AGGREGATE KEY(`metric_time`, `ts`, `service`, `service_id`, `service_instance`, 
 PARTITION BY RANGE(`metric_time`) ()
 DISTRIBUTED BY HASH(`service_id`) BUCKETS 3
 PROPERTIES (
-  "replication_num" = "1",
+  "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
   "dynamic_partition.start" = "-30",
@@ -1148,7 +1148,7 @@ AGGREGATE KEY(`metric_time`, `ts`, `rootResource`, `service`, `service_id`, `ser
 PARTITION BY RANGE(`metric_time`) ()
 DISTRIBUTED BY HASH(`service_id`) BUCKETS 3
 PROPERTIES (
-  "replication_num" = "1",
+  "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
   "dynamic_partition.start" = "-30",
@@ -1187,7 +1187,7 @@ AGGREGATE KEY(`metric_time`, `ts`, `errorType`, `hostName`, `httpMethod`, `httpS
 PARTITION BY RANGE(`metric_time`) ()
 DISTRIBUTED BY HASH(`service_id`) BUCKETS 3
 PROPERTIES (
-  "replication_num" = "1",
+  "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
   "dynamic_partition.start" = "-30",
@@ -1215,7 +1215,7 @@ CREATE TABLE config_metric_core (
 ) ENGINE=OLAP
 UNIQUE KEY(`id`)
 DISTRIBUTED BY HASH(`id`) BUCKETS 8
-PROPERTIES ("replication_num" = "1");
+PROPERTIES ("replication_num" = "3");
 
 -- config_metric_core seed (应用性能; taxonomy aligned with alarm ruleSetting)
 INSERT INTO config_metric_core
@@ -1271,7 +1271,7 @@ CREATE TABLE config_event_rule (
 ) ENGINE=OLAP
 UNIQUE KEY(`id`)
 DISTRIBUTED BY HASH(`id`) BUCKETS 8
-PROPERTIES ("replication_num" = "1");
+PROPERTIES ("replication_num" = "3");
 
 -- Built-in detection rules (all services entry overview, enabled by default).
 INSERT INTO config_event_rule
@@ -1313,7 +1313,7 @@ CREATE TABLE config_event (
 UNIQUE KEY(`id`)
 DISTRIBUTED BY HASH(`id`) BUCKETS 8
 PROPERTIES (
-  "replication_num" = "1",
+  "replication_num" = "3",
   "bloom_filter_columns" = "rule_id,service,status"
 );
 
@@ -1327,7 +1327,7 @@ CREATE TABLE config_alarm_policy (
 ) ENGINE=OLAP
 UNIQUE KEY(`policy_type`, `policy_id`)
 DISTRIBUTED BY HASH(`policy_id`) BUCKETS 8
-PROPERTIES ("replication_num" = "1");
+PROPERTIES ("replication_num" = "3");
 
 CREATE TABLE config_alarm (
   `id`             VARCHAR(64)  NOT NULL,
@@ -1346,7 +1346,7 @@ CREATE TABLE config_alarm (
 UNIQUE KEY(`id`)
 DISTRIBUTED BY HASH(`id`) BUCKETS 8
 PROPERTIES (
-  "replication_num" = "1",
+  "replication_num" = "3",
   "bloom_filter_columns" = "id,service,status,level"
 );
 
@@ -1357,7 +1357,7 @@ CREATE TABLE config_alarm_event (
 ) ENGINE=OLAP
 UNIQUE KEY(`alarm_id`, `event_id`)
 DISTRIBUTED BY HASH(`alarm_id`) BUCKETS 8
-PROPERTIES ("replication_num" = "1");
+PROPERTIES ("replication_num" = "3");
 
 CREATE TABLE config_notify_channel (
   `id`           BIGINT       NOT NULL,
@@ -1368,7 +1368,7 @@ CREATE TABLE config_notify_channel (
 ) ENGINE=OLAP
 UNIQUE KEY(`id`)
 DISTRIBUTED BY HASH(`id`) BUCKETS 4
-PROPERTIES ("replication_num" = "1");
+PROPERTIES ("replication_num" = "3");
 
 INSERT INTO config_notify_channel (id, channel_type, webhook_url, enabled, updated_at)
 VALUES (1, 'webhook', '', 0, NOW());
@@ -1385,7 +1385,7 @@ CREATE TABLE config_llm_provider (
 ) ENGINE=OLAP
 UNIQUE KEY(`provider_code`)
 DISTRIBUTED BY HASH(`provider_code`) BUCKETS 4
-PROPERTIES ("replication_num" = "1");
+PROPERTIES ("replication_num" = "3");
 
 CREATE TABLE config_llm_model (
   `provider_code`      VARCHAR(64)  NOT NULL,
@@ -1400,7 +1400,7 @@ CREATE TABLE config_llm_model (
 ) ENGINE=OLAP
 UNIQUE KEY(`provider_code`, `model_id`)
 DISTRIBUTED BY HASH(`provider_code`) BUCKETS 4
-PROPERTIES ("replication_num" = "1");
+PROPERTIES ("replication_num" = "3");
 
 CREATE TABLE config_ai_message (
   `session_id`       VARCHAR(128) NOT NULL,
@@ -1427,7 +1427,7 @@ CREATE TABLE config_ai_message (
 ) ENGINE=OLAP
 UNIQUE KEY(`session_id`, `message_id`)
 DISTRIBUTED BY HASH(`session_id`) BUCKETS 4
-PROPERTIES ("replication_num" = "1");
+PROPERTIES ("replication_num" = "3");
 
 CREATE TABLE config_ai_tool (
   `tool_id`        VARCHAR(128) NOT NULL,
@@ -1446,7 +1446,7 @@ CREATE TABLE config_ai_tool (
 ) ENGINE=OLAP
 UNIQUE KEY(`tool_id`)
 DISTRIBUTED BY HASH(`tool_id`) BUCKETS 4
-PROPERTIES ("replication_num" = "1");
+PROPERTIES ("replication_num" = "3");
 
 CREATE TABLE config_ai_skill (
   `skill_id`         VARCHAR(128) NOT NULL,
@@ -1464,7 +1464,21 @@ CREATE TABLE config_ai_skill (
 ) ENGINE=OLAP
 UNIQUE KEY(`skill_id`)
 DISTRIBUTED BY HASH(`skill_id`) BUCKETS 4
-PROPERTIES ("replication_num" = "1");
+PROPERTIES ("replication_num" = "3");
+
+CREATE TABLE config_web_node (
+  `node_key`    VARCHAR(256) NOT NULL COMMENT 'ip:port，web 实例唯一标识',
+  `ip`          VARCHAR(64)  NOT NULL,
+  `port`        INT          NOT NULL,
+  `hostname`    VARCHAR(128),
+  `node_id`     VARCHAR(128),
+  `status`      VARCHAR(32)  NOT NULL DEFAULT "ONLINE" COMMENT 'ONLINE/OFFLINE',
+  `last_seen`   DATETIME     NOT NULL COMMENT '最近一次心跳',
+  `created_at`  DATETIME     NOT NULL
+) ENGINE=OLAP
+UNIQUE KEY(`node_key`)
+DISTRIBUTED BY HASH(`node_key`) BUCKETS 4
+PROPERTIES ("replication_num" = "3");
 
 CREATE TABLE config_ai_expert (
   `expert_id`           VARCHAR(128) NOT NULL,
@@ -1486,7 +1500,7 @@ CREATE TABLE config_ai_expert (
 ) ENGINE=OLAP
 UNIQUE KEY(`expert_id`)
 DISTRIBUTED BY HASH(`expert_id`) BUCKETS 4
-PROPERTIES ("replication_num" = "1");
+PROPERTIES ("replication_num" = "3");
 
 CREATE TABLE config_ai_expert_task (
   `task_id`           VARCHAR(64)  NOT NULL,
@@ -1505,7 +1519,7 @@ CREATE TABLE config_ai_expert_task (
 ) ENGINE=OLAP
 UNIQUE KEY(`task_id`)
 DISTRIBUTED BY HASH(`task_id`) BUCKETS 4
-PROPERTIES ("replication_num" = "1");
+PROPERTIES ("replication_num" = "3");
 
 CREATE TABLE config_ai_capability (
   `capability_id`         VARCHAR(64)  NOT NULL,
@@ -1525,7 +1539,7 @@ CREATE TABLE config_ai_capability (
 ) ENGINE=OLAP
 UNIQUE KEY(`capability_id`)
 DISTRIBUTED BY HASH(`capability_id`) BUCKETS 1
-PROPERTIES ("replication_num" = "1");
+PROPERTIES ("replication_num" = "3");
 
 -- 7 个 AI 能力种子数据（名称/文案/专家/4 条体验 prompt），默认值与当前值一致；
 -- 配置页编辑只改当前列，"恢复默认" 把 default_* 列回写到当前列。
@@ -1577,7 +1591,7 @@ CREATE TABLE config_alarm_silence (
 ) ENGINE=OLAP
 UNIQUE KEY(`service`)
 DISTRIBUTED BY HASH(`service`) BUCKETS 4
-PROPERTIES ("replication_num" = "1");
+PROPERTIES ("replication_num" = "3");
 
 CREATE TABLE config_cockpit (
   `config_key`   VARCHAR(64)  NOT NULL,
@@ -1586,7 +1600,7 @@ CREATE TABLE config_cockpit (
 ) ENGINE=OLAP
 UNIQUE KEY(`config_key`)
 DISTRIBUTED BY HASH(`config_key`) BUCKETS 4
-PROPERTIES ("replication_num" = "1");
+PROPERTIES ("replication_num" = "3");
 
 INSERT INTO config_cockpit (config_key, config_value, updated_at)
 VALUES
@@ -1615,7 +1629,7 @@ AGGREGATE KEY(`metric_time`, `ts`, `component`, `instance`, `metric`, `dim`)
 PARTITION BY RANGE(`metric_time`) ()
 DISTRIBUTED BY HASH(`component`) BUCKETS 3
 PROPERTIES (
-  "replication_num" = "1",
+  "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
   "dynamic_partition.start" = "-30",
@@ -1631,7 +1645,7 @@ CREATE TABLE schema_version (
 ) ENGINE=OLAP
 UNIQUE KEY(`id`)
 DISTRIBUTED BY HASH(`id`) BUCKETS 1
-PROPERTIES ("replication_num" = "1");
+PROPERTIES ("replication_num" = "3");
 
 INSERT INTO schema_version (id, version, applied_at)
 VALUES (1, 8, NOW());

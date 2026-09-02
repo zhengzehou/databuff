@@ -20,7 +20,7 @@ http.interceptors.request.use(
     config.cancelToken = config.cancelToken || cancelToken()
     const blackList = ['/webapi', '/api6972', '/localapi']
     if (blackList.every(t => url.indexOf(t) !== 0)) {
-      const baseURL = '/webapi';
+      const baseURL = (import.meta.env.VITE_API_BASE as string) || '/webapi';
       config.url = baseURL + config.url;
     }
     if (getToken()) {
@@ -44,10 +44,10 @@ http.interceptors.response.use(
           const _newUrl = new URL(location.href);
           if (_newUrl.searchParams.has('dbt')) {
             _newUrl.search = '';
-            _newUrl.pathname = '/login';
+            _newUrl.pathname = import.meta.env.VITE_BASE + 'login';
             window.location.replace(_newUrl.toString());
           } else {
-            window.location.replace('/login');
+            window.location.replace(import.meta.env.VITE_BASE + 'login');
           }
         }, 2000);
         return Promise.reject(!isBlob ? response.data : response);

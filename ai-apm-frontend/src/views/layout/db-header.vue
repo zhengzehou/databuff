@@ -53,7 +53,7 @@ export default class Header extends Vue {
   }
 
   get headerWordmark () {
-    return '/img/logo_wordmark_header.svg';
+    return import.meta.env.VITE_BASE + 'img/logo_wordmark_header.svg';
   }
 
   get isOfficial () {

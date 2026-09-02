@@ -329,10 +329,10 @@ const actions: ActionTree<State, any> = {
       productNameCn: 'AI Native一体化观测平台',
       productNameEn: 'DATABUFF',
       copyright: '',
-      loginLogo: '/img/logo_login.png',
-      headerLogo: '/img/logo_wh.svg',
-      headerCollapseLogo: '/img/logo_wh.svg',
-      faviconLogo: '/img/favicon.ico',
+      loginLogo: import.meta.env.VITE_BASE + 'img/logo_login.png',
+      headerLogo: import.meta.env.VITE_BASE + 'img/logo_wh.svg',
+      headerCollapseLogo: import.meta.env.VITE_BASE + 'img/logo_wh.svg',
+      faviconLogo: import.meta.env.VITE_BASE + 'img/favicon.ico',
     }
     const { result, error } = await toAsyncWait(ConfigApi.getLogoConfig())
     if (!error) {

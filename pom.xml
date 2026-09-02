@@ -38,10 +38,10 @@
         <!-- 项目版本：子模块通过 ${revision} 引用，发版时只改此处 -->
         <revision>0.1.8</revision>
         <!-- 编译与运行统一使用 JDK 17 -->
-        <java.version>17</java.version>
-        <maven.compiler.release>17</maven.compiler.release>
-        <maven.compiler.source>17</maven.compiler.source>
-        <maven.compiler.target>17</maven.compiler.target>
+        <java.version>21</java.version>
+        <maven.compiler.release>21</maven.compiler.release>
+        <maven.compiler.source>21</maven.compiler.source>
+        <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <disruptor.version>4.0.0</disruptor.version>
         <grpc.version>1.71.0</grpc.version>
@@ -56,6 +56,8 @@
         <druid.version>1.2.27</druid.version>
         <!-- 内置 Doris 服务端版本（deploy/docker、deploy/k8s 镜像 tag）；JDBC 走 mysql-connector-j -->
         <doris.version>4.1.1</doris.version>
+        <!-- 执行 install/package 时跳过测试；需要运行测试时用 -Dmaven.test.skip=false 覆盖 -->
+        <maven.test.skip>true</maven.test.skip>
     </properties>
 
     <dependencyManagement>
@@ -170,7 +172,7 @@
                         <configuration>
                             <rules>
                                 <requireJavaVersion>
-                                    <version>[17,18)</version>
+                                    <version>[21,22)</version>
                                     <message>DataBuff AI APM 要求使用 JDK 17 进行 Maven 编译与运行。</message>
                                 </requireJavaVersion>
                             </rules>

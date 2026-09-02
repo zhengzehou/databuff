@@ -26,7 +26,7 @@ function scheduleIdleLogout() {
   idleTimer = setTimeout(() => {
     UserApi.logoutHandle().finally(() => {
       removeTokenAndCid();
-      const loginPath = '/login';
+      const loginPath = import.meta.env.VITE_BASE + 'login';
       if (window.location.pathname !== loginPath) {
         window.location.replace(loginPath);
       }

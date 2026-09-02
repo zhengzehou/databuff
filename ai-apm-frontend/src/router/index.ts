@@ -30,7 +30,7 @@ let firstStatusInit = false;
 let _status: any = null;
 
 const options: RouterOptions = {
-  mode: 'history',
+  mode: 'hash',
   // base: import.meta.env.BASE_URL,
   base: '/databuff',
   linkActiveClass: 'active',

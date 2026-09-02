@@ -16,14 +16,17 @@ public class AuthService {
     private final JwtTokenService jwtTokenService;
     private final PortalUserManagementService portalUserManagementService;
     private final SessionIdleSettingsService sessionIdleSettingsService;
+    private final PassportLoginClient passportLoginClient;
 
     public AuthService(
             JwtTokenService jwtTokenService,
             PortalUserManagementService portalUserManagementService,
-            SessionIdleSettingsService sessionIdleSettingsService) {
+            SessionIdleSettingsService sessionIdleSettingsService,
+            PassportLoginClient passportLoginClient) {
         this.jwtTokenService = jwtTokenService;
         this.portalUserManagementService = portalUserManagementService;
         this.sessionIdleSettingsService = sessionIdleSettingsService;
+        this.passportLoginClient = passportLoginClient;
     }
 
     public LoginResult login(String username, String password) {
@@ -52,6 +55,34 @@ public class AuthService {
         ds.put("orgId", 1);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("token", token);
+        body.put("cid", DEFAULT_CID);
+        body.put("ds", ds);
+        return Optional.of(new PortalLoginPayload(body));
+    }
+
+    /**
+     * Frontend login entry (param names unchanged): the built-in admin account keeps the local
+     * flow, every other account is validated against the employee passport service. Both paths
+     * issue the same {@link PortalLoginPayload} shape.
+     */
+    public Optional<PortalLoginPayload> portalLoginOrPassport(String account, String password) {
+        if (account == null || password == null || account.isBlank() || password.isBlank()) {
+            return Optional.empty();
+        }
+        String normalizedAccount = account.trim();
+        if (portalUserManagementService.findByAccount(normalizedAccount).isPresent()) {
+            return portalLogin(normalizedAccount, password);
+        }
+        Optional<PassportLoginClient.PassportUser> user =
+                passportLoginClient.login(normalizedAccount, password);
+        if (user.isEmpty()) {
+            return Optional.empty();
+        }
+        Map<String, Object> ds = new LinkedHashMap<>();
+        ds.put("id", 1);
+        ds.put("orgId", 1);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("token", issueSessionToken(normalizedAccount));
         body.put("cid", DEFAULT_CID);
         body.put("ds", ds);
         return Optional.of(new PortalLoginPayload(body));

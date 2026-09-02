@@ -13,6 +13,22 @@ management:
       exposure:
         include: health,info
 
+logging:
+  level:
+    root: INFO
+    # 应用包级别（可用 APM_LOG_LEVEL 覆盖，生产建议 INFO 减少磁盘/控制台噪声）
+    com.databuff.apm: ${APM_LOG_LEVEL:INFO}
+  file:
+    # 日志文件（目录+文件名；可用 APM_LOG_FILE 覆盖）
+    name: ${APM_LOG_FILE:/data/logs/apm-ingest.log}
+  logback:
+    rollingpolicy:
+      # 滚动文件名：按天 + 序号（%i 供大小滚动使用）。若覆盖 APM_LOG_FILE，建议同步覆盖 APM_LOG_PATTERN
+      file-name-pattern: ${APM_LOG_PATTERN:apm-ingest.%d{yyyy-MM-dd}.%i.log}
+      max-history: 7
+      total-size-cap: 10GB
+      clean-history-on-start: true
+
 ingest:
   pipeline:
     trace-tasks: ${INGEST_TRACE_TASKS:8}
@@ -57,12 +73,26 @@ ingest:
     enable: true
     first-protect-time-ms: 3600000
     merge-services: []
+  nginx-kafka:
+    enabled: ${NGINX_KAFKA_ENABLED:true}
+    bootstrap-servers: ${NGINX_KAFKA_BOOTSTRAP:172.25.200.167:9092}
+    topic: ${NGINX_KAFKA_TOPIC:ULE-ACCESS-V3}
+    group-id: ${NGINX_KAFKA_GROUP:databuff-nginx-ingest-2}
+    max-poll-records: ${NGINX_KAFKA_MAX_POLL:500}
+    poll-timeout-ms: ${NGINX_KAFKA_POLL_TIMEOUT:100}
+    request-time-unit: ${NGINX_KAFKA_TIME_UNIT:milliseconds}
+    auto-offset-reset: latest
+    # 调用方 IP → 服务名 解析接口（用于构建服务拓扑）。GET <url>?ip=<纯IP>，返回 JSON，
+    # 服务名由 appModule+appName 拼接（如 uletm + apm-service = uletm/apm-service）。
+    # 注意：这里配置接口根地址，不要带 ?ip=（IpServiceResolver 会自动拼接）。留空则不解析，用 IP 兜底。
+    ip-service-url: ${NGINX_KAFKA_IP_SERVICE_URL:https://opt.uletm.com/apm-statistics/api/search/app}
+    ip-service-name-field: ${NGINX_KAFKA_IP_SERVICE_NAME_FIELD:serviceName}
   doris:
     fe-host: ${DORIS_FE_HOST:127.0.0.1}
     fe-http-port: ${DORIS_FE_HTTP_PORT:8030}
     fe-query-port: ${DORIS_FE_QUERY_PORT:9030}
     # Comma-separated BE HTTP endpoints for direct Stream Load, e.g. be1:8040,be2:8040
-    be-http-host: ${DORIS_BE_HTTP_HOST:}
+    be-http-host: ${DORIS_BE_HTTP_HOST:127.0.0.1}
     be-http-port: ${DORIS_BE_HTTP_PORT:8040}
     metric-database: databuff
     metric-table: service
@@ -74,7 +104,7 @@ ingest:
     stream-load-max-failures: ${INGEST_DORIS_STREAM_LOAD_MAX_FAILURES:3}
     # Parallel in-flight Stream Loads for trace_dc_span (ready-queue consumers). Env: INGEST_DORIS_TRACE_FLUSH_CONCURRENCY
     # Default 1: each load adds tablet versions; parallel loads blow past Doris's ~2000 version cap on single BE.
-    trace-flush-concurrency: ${INGEST_DORIS_TRACE_FLUSH_CONCURRENCY:1}
+    trace-flush-concurrency: ${INGEST_DORIS_TRACE_FLUSH_CONCURRENCY:2}
     # Primary flush trigger: per-thread buffer hand-off at this estimated NDJSON size (default 50 MiB).
     # Prefer large/infrequent loads over small/frequent ones (BE: "Please reduce the frequency of loading data").
     flush-batch-bytes: ${INGEST_DORIS_FLUSH_BATCH_BYTES:52428800}

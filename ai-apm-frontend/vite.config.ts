@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue2'
 import vueJsx from '@vitejs/plugin-vue2-jsx'
 import { createSvgIconsPlugin } from 'vite-plugin-svg-icons'
@@ -25,11 +25,13 @@ const commitHash = safeExec('git rev-parse --verify HEAD') || safeExec('git show
 const commitTimestamp = safeExec("git show -s --format=%cI") || safeExec('git show -s --format=%cd') || '';
 const buildTimestamp = String(new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString());
 
-export default defineConfig(() => {
+export default defineConfig(({ mode }) => {
   // 是否启用 visualizer
   const isVisualizerEnabled = process.env.VITE_ENABLE_VISUALIZER === 'true'
+  const env = loadEnv(mode, process.cwd(), '')
 
   return {
+    base: env.VITE_BASE || '/databuff/',
     esbuild:{
       pure: ['console.log'], // 删除 console.log
       drop: ['debugger'], // 删除 debugger
@@ -81,13 +83,13 @@ export default defineConfig(() => {
     server: {
       proxy: {
         '/webapi': {
-          target: process.env.VITE_PROXY_TARGET || 'https://192.168.50.193',
+          target: process.env.VITE_PROXY_TARGET || 'http://localhost:27403',
           secure: false,
           changeOrigin: true,
           // rewrite: (path) => path.replace(/^\/webapi/, '/webapi'),
         },
         '/api6972': {
-          target: process.env.VITE_PROXY_TARGET || 'https://192.168.50.193',
+          target: process.env.VITE_PROXY_TARGET || 'http://localhost:27403',
           secure: false,
           changeOrigin: true,
           // rewrite: (path) => path.replace(/^\/api6972/, '/api6972'),

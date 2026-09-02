@@ -67,6 +67,9 @@ public final class OtelConverter {
             for (ScopeSpans scopeSpans : resourceSpans.getScopeSpansList()) {
                 for (Span span : scopeSpans.getSpansList()) {
                     try {
+                        if (isNoiseSpan(span)) {
+                            continue;
+                        }
                         out.add(new ConvertedTrace(serviceKey, buildDcSpan(
                                 serviceName,
                                 serviceKey,
@@ -80,6 +83,80 @@ public final class OtelConverter {
             }
         }
         return out;
+    }
+
+    /**
+     * Drop noise spans from OTel Java agent auto-instrumentation before they are persisted, so the
+     * trace list/detail stay clean: Consul service-discovery client threads, Consul catalog HTTP
+     * calls, Spring Boot actuator health checks, and method-only spans (no path).
+     */
+    private static boolean isNoiseSpan(Span span) {
+        String spanName = span.getName();
+        if (spanName == null) {
+            return false;
+        }
+        String name = spanName.trim();
+        if (name.startsWith("ConsulCatalogWatch")
+                || name.equalsIgnoreCase("PING")
+                || name.equalsIgnoreCase("SENTINEL")) {
+            return true;
+        }
+        String url = firstNonBlank(
+                attribute(span.getAttributesList(), "http.url"),
+                attribute(span.getAttributesList(), "url.full"));
+        if (url != null && url.contains("/v1/catalog/services")) {
+            return true;
+        }
+        String lower = name.toLowerCase(java.util.Locale.ROOT);
+        if (lower.contains("/actuator/health")) {
+            return true;
+        }
+        return isHttpMethodOnly(name);
+    }
+
+    /** True when the text is exactly an HTTP method with no path (e.g. {@code OPTIONS}). */
+    private static boolean isHttpMethodOnly(String text) {
+        if (text == null || text.isBlank()) {
+            return false;
+        }
+        String upper = text.toUpperCase(java.util.Locale.ROOT);
+        return switch (upper) {
+            case "GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH", "TRACE", "CONNECT" -> true;
+            default -> false;
+        };
+    }
+    /**
+     * Spring Cloud Gateway (OTel experimental span attributes) reports the route id as the span
+     * name (e.g. {@code POST 203}). When {@code process.command_line} enables
+     * {@code spring-cloud-gateway.experimental-span-attributes=true}, the real request path is
+     * available as {@code url.path}; rebuild the span name as {@code METHOD /real/path} so the
+     * trace list shows the actual API instead of only the route id.
+     */
+    private static String resolveGatewayRouteSpanName(String otelName, Map<String, String> meta) {
+        if (otelName == null || otelName.isBlank() || meta == null || meta.isEmpty()) {
+            return otelName;
+        }
+        String routeId = meta.get("spring-cloud-gateway.route.id");
+        String urlScheme = meta.get("url.scheme"); // == http
+        String httpRoute = meta.get("http.route"); // ! / start
+        boolean isGatewayRoute = urlScheme != null && urlScheme.equals("http") && httpRoute != null && !httpRoute.startsWith("/");
+        if ((routeId == null || routeId.isBlank()) && !isGatewayRoute) {
+            return otelName;
+        }
+        if(routeId == null){
+            routeId = httpRoute;
+        }
+        String urlPath = meta.get("url.path");
+        if (urlPath == null || urlPath.isBlank() || otelName.contains(urlPath)) {
+            return otelName;
+        }
+        // otelName is usually "METHOD <routeId>"; keep the method and swap the route id for the
+        // real path, keeping the route id for traceability (e.g. POST /dashboard/... [route:203]).
+        int space = otelName.indexOf(' ');
+        if (space > 0 && routeId.equals(otelName.substring(space + 1).trim())) {
+            return otelName.substring(0, space) + " " + urlPath + " [route:" + routeId + "]";
+        }
+        return otelName;
     }
 
     /** OTLP ExportMetricsServiceRequest → {@link OtlMetricLine} 列表。 */
@@ -282,6 +359,11 @@ public final class OtelConverter {
         if (severityText == null || severityText.isBlank()) {
             severityText = severityFromNumber(severityNumber);
         }
+        String traceId = hex(logRecord.getTraceId());
+        // nginx 来源的 log 带 nginx.type 标记，traceId 与对应 span 保持相同的 ng- 前缀。
+        if (attribute(logRecord.getAttributesList(), "nginx.type") != null) {
+            traceId = "ng-" + traceId;
+        }
         return new OtlLogLine(
                 null,
                 timeNs,
@@ -291,7 +373,7 @@ public final class OtelConverter {
                 serviceName,
                 serviceInstance,
                 hostName,
-                hex(logRecord.getTraceId()),
+                traceId,
                 hex(logRecord.getSpanId()),
                 severityText,
                 severityNumber,
@@ -415,9 +497,14 @@ public final class OtelConverter {
         dc.serviceId = serviceKey;
         dc.service = serviceName;
         String otelName = span.getName();
-        dc.resource = otelName;
-        dc.name = TraceSpanNames.normalizeOtelName(otelName, metaAttributes);
+        String resolvedSpanName = resolveGatewayRouteSpanName(otelName, metaAttributes);
+        dc.resource = resolvedSpanName;
+        dc.name = TraceSpanNames.normalizeOtelName(resolvedSpanName, metaAttributes);
         dc.trace_id = hex(span.getTraceId());
+        // nginx 来源的 span 带 nginx.type 标记，traceId 加 ng- 前缀便于区分。
+        if (metaAttributes.containsKey("nginx.type")) {
+            dc.trace_id = "ng-" + dc.trace_id;
+        }
         dc.span_id = hex(span.getSpanId());
         if (isEmptyParentSpanId(span.getParentSpanId())) {
             dc.parent_id = "";

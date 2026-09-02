@@ -4,7 +4,7 @@
       <div v-if="loginLogo || productNameCn" class="login-logo-slogan">
         <div v-if="loginLogo" class="login-logo-wrap">
           <img :src="loginLogo" alt="" class="login-logo-icon" />
-          <img src="/img/logo_wordmark.svg" alt="Databuff" class="login-logo-wordmark" />
+          <img :src="wordmarkSrc" alt="Databuff" class="login-logo-wordmark" />
         </div>
         <div v-if="productNameCn" class="login-slogan">{{ productNameCn }}</div>
       </div>
@@ -40,6 +40,10 @@ export default class Login extends Vue {
 
   get productNameCn () {
     return this.$store.getters['User/getLogoConfig']?.productNameCn || '';
+  }
+
+  get wordmarkSrc () {
+    return import.meta.env.VITE_BASE + 'img/logo_wordmark.svg';
   }
 
   get copyright () {

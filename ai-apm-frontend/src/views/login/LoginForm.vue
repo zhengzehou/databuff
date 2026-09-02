@@ -37,13 +37,13 @@
 <script lang="ts">
 import { Vue, Component } from 'vue-property-decorator';
 import i18n from '@/i18n';
-import md5 from 'md5';
 import nameIcon from '@/assets/img/login/name.png';
 import passwordIcon from '@/assets/img/login/password.png';
 import { loginHandle } from '@/api/user';
 import { setTokenAndCid, setDsi, setOi, setDba } from '@/utils/jsCookie';
 import { startSessionIdleWatcher } from '@/utils/sessionIdle';
 import { EventBus } from '@/utils/common';
+import { aesEncrypt } from '@/utils/encrypt';
 
 interface LoginFormInterface {
   account: string;
@@ -83,7 +83,7 @@ export default class LoginForm extends Vue {
       if (valid) {
         const params = {
           account: this.loginForm.account,
-          password: md5(this.loginForm.password),
+          password: aesEncrypt(this.loginForm.password),
         };
         loginHandle(params)
           .then((rst: any) => {

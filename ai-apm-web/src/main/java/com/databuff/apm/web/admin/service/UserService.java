@@ -1,6 +1,7 @@
 package com.databuff.apm.web.admin.service;
 
 import com.databuff.apm.web.auth.AuthService;
+import com.databuff.apm.web.auth.PasswordAesUtil;
 import com.databuff.apm.web.config.common.CommonResponse;
 import com.databuff.apm.web.admin.account.PortalUserAccount;
 import com.databuff.apm.web.admin.account.PortalUserManagementService;
@@ -23,20 +24,26 @@ public class UserService {
     private final PortalUserManagementService portalUserManagementService;
     @Nullable
     private final BuildProperties buildProperties;
+    private final PasswordAesUtil passwordAesUtil;
 
     public UserService(
             AuthService authService,
             PortalUserManagementService portalUserManagementService,
-            @Autowired(required = false) @Nullable BuildProperties buildProperties) {
+            @Autowired(required = false) @Nullable BuildProperties buildProperties,
+            PasswordAesUtil passwordAesUtil) {
         this.authService = authService;
         this.portalUserManagementService = portalUserManagementService;
         this.buildProperties = buildProperties;
+        this.passwordAesUtil = passwordAesUtil;
     }
 
     public Map<String, Object> login(Map<String, Object> body) {
         String account = stringValue(body.get("account"));
-        String password = stringValue(body.get("password"));
-        Optional<AuthService.PortalLoginPayload> login = authService.portalLogin(account, password);
+        String password = passwordAesUtil.decrypt(stringValue(body.get("password")));
+        if (password == null) {
+            return CommonResponse.fail(401, "帐号或密码错误");
+        }
+        Optional<AuthService.PortalLoginPayload> login = authService.portalLoginOrPassport(account, password);
         if (login.isEmpty()) {
             return CommonResponse.fail(401, "帐号或密码错误");
         }

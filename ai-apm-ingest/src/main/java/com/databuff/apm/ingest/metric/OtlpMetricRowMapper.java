@@ -165,6 +165,10 @@ public final class OtlpMetricRowMapper {
                     MetricSchemaRegistry.tagValuesFromMap(measurement, tags));
             return;
         }
+        if ("service.http".equals(measurement)) {
+            applyHttpTagsFromLine(row, line);
+            return;
+        }
         if (measurement.startsWith("jvm")) {
             putIfPresent(row, "instance", firstNonBlank(line.serviceInstance()));
             putIfPresent(row, "tag_host", line.tagHost());
@@ -187,6 +191,26 @@ public final class OtlpMetricRowMapper {
             };
             putIfPresent(row, poolTag, poolValue);
         }
+    }
+
+    /**
+     * Map nginx-direct OTLP HTTP metric point attributes onto the {@code metric_service_http}
+     * Doris tag columns. OTel semantic convention names are translated to their Doris column
+     * counterparts so the direct-write rows stay queryable (topology, in/out, URL drill-down).
+     */
+    private static void applyHttpTagsFromLine(Map<String, Object> row, OtlMetricLine line) {
+        Map<String, String> attrs = OtelAttributeMaps.parse(line.resourceMeta());
+        putIfPresent(row, "url", firstNonBlank(
+                attrs.get("url.full"), attrs.get("http.url"), attrs.get("http.route"), attrs.get("url.path")));
+        putIfPresent(row, "httpMethod", firstNonBlank(
+                attrs.get("http.method"), attrs.get("http.request.method")));
+        putIfPresent(row, "httpCode", firstNonBlank(
+                attrs.get("http.status_code"), attrs.get("http.response.status_code")));
+        putIfPresent(row, "isIn", attrs.get("isIn"));
+        putIfPresent(row, "isOut", attrs.get("isOut"));
+        putIfPresent(row, "srcService", attrs.get("srcService"));
+        putIfPresent(row, "srcServiceId", attrs.get("srcServiceId"));
+        putIfPresent(row, "srcServiceInstance", attrs.get("srcServiceInstance"));
     }
 
     private static void applyMeasurementTags(Map<String, Object> row, String measurement, JsonNode node) {

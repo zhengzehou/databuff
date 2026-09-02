@@ -56,7 +56,7 @@ export default class App extends Vue {
     // 平台Logo配置
     this.$store.dispatch('User/getLogoConfig').then((data: any) => {
       document.title = data.productNameEn || '';
-      document.getElementById('htmlHeadLinkFavicon')?.setAttribute('href', data.faviconLogo || '/img/favicon.ico');
+      document.getElementById('htmlHeadLinkFavicon')?.setAttribute('href', data.faviconLogo || import.meta.env.VITE_BASE + 'img/favicon.ico');
       const serverLocale = data.locale;
       if (!hasStoredLocale() && (serverLocale === 'zh-CN' || serverLocale === 'en-US')) {
         setAppLocale(serverLocale as AppLocale);

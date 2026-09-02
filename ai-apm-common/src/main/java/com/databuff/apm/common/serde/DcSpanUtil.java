@@ -176,6 +176,9 @@ public final class DcSpanUtil {
         if (span.is_parent != 1) {
             return null;
         }
+        if (isNoiseTraceMetricResource(span.resource)) {
+            return null;
+        }
         Map<String, String> tags = new LinkedHashMap<>();
         tags.put("errorType", span.error > 0 ? "error" : "ok");
         tags.put("hostName", nullToEmpty(span.hostName));
@@ -186,6 +189,36 @@ public final class DcSpanUtil {
         tags.put("service_id", nullToEmpty(span.serviceId));
         tags.put("service_instance", nullToEmpty(span.serviceInstance));
         return minuteAggregatedMetric("service.trace", span, tags);
+    }
+
+    /** Exclude health checks, redis PING, and method-only entries from the trace overview metric. */
+    private static boolean isNoiseTraceMetricResource(String resource) {
+        if (resource == null || resource.isBlank()) {
+            return true;
+        }
+        String text = resource.trim();
+        String lower = text.toLowerCase(Locale.ROOT);
+        if (lower.contains("/actuator/health")
+                || lower.equals("ping")
+                || lower.equals("sentinel")
+                || text.startsWith("ConsulCatalogWatch")
+                || text.contains("/v1/catalog/services")
+        ) {
+            return true;
+        }
+        return isHttpMethodOnly(text);
+    }
+
+    /** True when the text is exactly an HTTP method with no path (e.g. {@code OPTIONS}). */
+    private static boolean isHttpMethodOnly(String text) {
+        if (text == null || text.isBlank()) {
+            return false;
+        }
+        String upper = text.toUpperCase(Locale.ROOT);
+        return switch (upper) {
+            case "GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH", "TRACE", "CONNECT" -> true;
+            default -> false;
+        };
     }
 
     static OptimizedMetric serviceHttpMetric(DcSpan span) {
