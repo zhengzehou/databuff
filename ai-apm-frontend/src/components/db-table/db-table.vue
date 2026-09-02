@@ -488,7 +488,7 @@ export default {
       },
       offsetBaseQuery: {
         offset: 0,
-        size: 50,
+        size: this.size || 50,
       },
       sortQuery: {
         sortField: null,
@@ -725,9 +725,9 @@ export default {
       this.hasExactTotal = false
       this.lastFetchCount = 0
       this.offsetBaseQuery.offset = 0
-      this.offsetBaseQuery.size = 50
+      this.offsetBaseQuery.size = this.size || 50
       this.baseQuery.pageNum = 1
-      this.baseQuery.pageSize = 50
+      this.baseQuery.pageSize = this.size || 50
       // 滚动dom需要重置scrollTop为0,避免自动请求
       if (this.scrollContainer) {
         this.scrollContainer.scrollTop = 0;
@@ -805,9 +805,9 @@ export default {
       }
       if (reset) {
         this.offsetBaseQuery.offset = 0
-        this.offsetBaseQuery.size = 50
+        this.offsetBaseQuery.size = this.size || 50
         this.baseQuery.pageNum = 1
-        this.baseQuery.pageSize = 50
+        this.baseQuery.pageSize = this.size || 50
         // 滚动dom需要重置scrollTop为0,避免自动请求
         if (this.scrollContainer) {
           this.scrollContainer.scrollTop = 0;

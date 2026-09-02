@@ -28,9 +28,17 @@
                 </span>
               </span>
             </div>
-            <simplebar v-if="item.children.length" style="max-height: 200px;">
+            <el-input
+              v-if="searchableNames.includes(item.name)"
+              v-model="filterSearch[item.name]"
+              :placeholder="'搜索' + (item.titleKey ? $t(item.titleKey) : item.title)"
+              prefix-icon="el-icon-search"
+              clearable
+              size="small"
+              class="filter-search" />
+            <simplebar v-if="displayChildren(item).length" style="max-height: 200px;">
               <el-checkbox-group v-model="item.model" @change="changeHandle">
-                <template v-for="t in item.children">
+                <template v-for="t in displayChildren(item)">
                   <el-checkbox
                     :key="t.value"
                     :label="t.value"
@@ -108,6 +116,9 @@ export default class ChooseCollapse extends Vue {
   private filterList: any[] = []
   private filterLoading = true
   private filterLoadedMapping: any = {} // 筛选项的已加载状态
+  // 仅对已在页面中的选项做客户端模糊过滤，不请求后端
+  private searchableNames: string[] = ['serviceIds', 'serviceInstances', 'hosts']
+  private filterSearch: Record<string, string> = {}
 
   @Watch('activeNames')
   private async onActiveNamesChange (newVal: string[], oldVal: string[]) {
@@ -316,6 +327,18 @@ export default class ChooseCollapse extends Vue {
     this.changeHandle()
   }
 
+  // 客户端模糊过滤：根据搜索关键字过滤已加载的子项（不影响已选中的 model）
+  private displayChildren (item: any) {
+    const kw = (this.filterSearch[item.name] || '').trim().toLowerCase();
+    if (!kw) {
+      return item.children || [];
+    }
+    return (item.children || []).filter((t: any) => {
+      const text = t.labelKey ? this.$t(t.labelKey) : t.label;
+      return String(text).toLowerCase().includes(kw);
+    });
+  }
+
   private toggleCollapsed (status: boolean) {
     this.$emit('on-toggle-filter', status)
   }
@@ -410,6 +433,24 @@ export default class ChooseCollapse extends Vue {
     .filter-input {
       :deep(.el-input__inner) {
         border: none;
+      }
+    }
+
+    .filter-search {
+      margin-bottom: 8px;
+
+      :deep(.el-input__inner) {
+        background-color: var(--bg-color03);
+        border-color: var(--border-color-light);
+        border-radius: 4px;
+        height: 28px;
+        line-height: 28px;
+      }
+      :deep(.el-input__prefix) {
+        color: var(--color-text-secondary);
+      }
+      :deep(.el-input__icon) {
+        line-height: 28px;
       }
     }
 

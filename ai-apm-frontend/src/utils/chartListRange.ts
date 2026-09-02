@@ -1,6 +1,6 @@
 import dayjs from 'dayjs';
 
-export const DEFAULT_CHART_LIST_LIMIT = 1000;
+export const DEFAULT_CHART_LIST_LIMIT = 100;
 
 export interface RecentChartListRangeOptions {
   interval: number;

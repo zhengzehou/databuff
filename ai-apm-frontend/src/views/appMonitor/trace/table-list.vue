@@ -5,6 +5,7 @@
       :queryApi='queryApi'
       :queryParams='queryParams'
       :offsetMode='true'
+      :size='100'
       :columnConfig='getColumnConfig'
       :timeMode="false"
       :autoRefresh='false'

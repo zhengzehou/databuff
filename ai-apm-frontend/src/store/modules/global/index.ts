@@ -57,7 +57,7 @@ const initState: State = {
 // getters
 const getters = {
   durationRange: (state: State) => state.durationRange,
-  globalTime: (state: State) => () => {
+  globalTime: (state: State) => (opts?: { noBuffer?: boolean }) => {
     if (state.globalTime.type === 'custom') {
       return {
         ...state.globalTime,
@@ -67,12 +67,12 @@ const getters = {
     } else {
       return {
         ...state.globalTime,
-        fromTime: setDateBySeconds(+new Date() - state.globalTime.duration - OneMinMs, 0),
-        toTime: setDateBySeconds(+new Date() - OneMinMs, 0),
+        fromTime: setDateBySeconds(+new Date() - state.globalTime.duration - (opts?.noBuffer ? 0 : OneMinMs), 0),
+        toTime: setDateBySeconds(+new Date() - (opts?.noBuffer ? 0 : OneMinMs), 0),
       }
     }
   },
-  globalTimeV2: (state: State) => () => {
+  globalTimeV2: (state: State) => (opts?: { noBuffer?: boolean }) => {
     if (state.globalTime.type === 'custom') {
       return {
         ...state.globalTime,
@@ -82,8 +82,8 @@ const getters = {
     } else {
       return {
         ...state.globalTime,
-        fromTime: dayjs(+new Date() - state.globalTime.duration - OneMinMs).format('YYYY-MM-DD HH:mm') + ':00',
-        toTime: dayjs(+new Date() - OneMinMs).format('YYYY-MM-DD HH:mm') + ':00',
+        fromTime: dayjs(+new Date() - state.globalTime.duration - (opts?.noBuffer ? 0 : OneMinMs)).format('YYYY-MM-DD HH:mm') + ':00',
+        toTime: dayjs(+new Date() - (opts?.noBuffer ? 0 : OneMinMs)).format('YYYY-MM-DD HH:mm') + ':00',
       }
     }
   },

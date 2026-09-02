@@ -74,10 +74,17 @@
                         class="filter-clear-btn db-icon-close cp" />
                     </div>
                   </template>
-                  <simplebar v-if="serviceOptions.length" style="max-height: 200px;">
+                  <el-input
+                    v-model="searchService"
+                    :placeholder="'搜索' + $t('modules.views.alarmCenter.alarm.s_47d68cd0')"
+                    prefix-icon="el-icon-search"
+                    clearable
+                    size="small"
+                    class="filter-search" />
+                  <simplebar v-if="filteredServiceOptions.length" style="max-height: 200px;">
                     <el-checkbox-group v-model="selectedServiceIds" @change="onFilterChange">
                       <el-checkbox
-                        v-for="item in serviceOptions"
+                        v-for="item in filteredServiceOptions"
                         :key="item.id"
                         :label="item.id"
                         class="filter-checkbox">{{ item.nameKey ? $t(item.nameKey) : item.name }}</el-checkbox>
@@ -96,10 +103,17 @@
                         class="filter-clear-btn db-icon-close cp" />
                     </div>
                   </template>
-                  <simplebar v-if="serviceInstanceOptions.length" style="max-height: 200px;">
+                  <el-input
+                    v-model="searchServiceInstance"
+                    :placeholder="'搜索' + $t('modules.views.alarmCenter.alarm.s_71673bab')"
+                    prefix-icon="el-icon-search"
+                    clearable
+                    size="small"
+                    class="filter-search" />
+                  <simplebar v-if="filteredServiceInstanceOptions.length" style="max-height: 200px;">
                     <el-checkbox-group v-model="selectedServiceInstances" @change="onFilterChange">
                       <el-checkbox
-                        v-for="instance in serviceInstanceOptions"
+                        v-for="instance in filteredServiceInstanceOptions"
                         :key="instance"
                         :label="instance"
                         class="filter-checkbox">{{ instance }}</el-checkbox>
@@ -118,10 +132,17 @@
                         class="filter-clear-btn db-icon-close cp" />
                     </div>
                   </template>
-                  <simplebar v-if="hostOptions.length" style="max-height: 200px;">
+                  <el-input
+                    v-model="searchHost"
+                    :placeholder="'搜索' + $t('modules.views.alarmCenter.alarm.s_65227369')"
+                    prefix-icon="el-icon-search"
+                    clearable
+                    size="small"
+                    class="filter-search" />
+                  <simplebar v-if="filteredHostOptions.length" style="max-height: 200px;">
                     <el-checkbox-group v-model="selectedHosts" @change="onFilterChange">
                       <el-checkbox
-                        v-for="host in hostOptions"
+                        v-for="host in filteredHostOptions"
                         :key="host"
                         :label="host"
                         class="filter-checkbox">{{ host }}</el-checkbox>
@@ -161,6 +182,7 @@
           :queryApi="queryApi"
           :queryParams="tableQueryParams"
           :offsetMode="true"
+          :size="100"
           :timeMode="false"
           :autoRefresh="false"
           :columnConfig="columnConfig"
@@ -219,7 +241,6 @@ import { toAsyncWait } from '@/utils/common';
 import { v4 as uuidv4 } from 'uuid';
 import ChartGroup from './overviewChart.vue';
 import LogDetailDrawer from './logDetailDrawer.vue';
-import { DEFAULT_CHART_LIST_LIMIT, resolveRecentRangeFromCounts } from '@/utils/chartListRange';
 import { formatCompactTimeRange } from '@/utils/timeFormat';
 import {
   ERROR_SEVERITIES,
@@ -249,6 +270,9 @@ export default class LogsAnalysis extends Vue {
   private serviceInstanceOptions: string[] = [];
   private hostOptions: string[] = [];
   private severityOptions: string[] = [];
+  private searchService = '';
+  private searchServiceInstance = '';
+  private searchHost = '';
   private timeParams = { fromTime: '', toTime: '', interval: 3600 };
   private listTimeRange = { fromTimeNs: '', toTimeNs: '' };
   private showList = false;
@@ -258,7 +282,7 @@ export default class LogsAnalysis extends Vue {
   private chartQueryLoading = false;
   private tableReady = false;
   private collapsed = false;
-  private activeFilterNames = ['service', 'serviceInstance', 'host', 'severity'];
+  private activeFilterNames = ['service', 'severity'];
   private refreshToken = 0;
   private refreshRetryTimer: number | null = null;
   private syncReloadSeq = 0;
@@ -294,7 +318,6 @@ export default class LogsAnalysis extends Vue {
     const params: Record<string, any> = {
       fromTimeNs: `${this.resolveTimeMillis(fromTime) * 1_000_000}`,
       toTimeNs: `${this.resolveTimeMillis(toTime) * 1_000_000}`,
-      size: DEFAULT_CHART_LIST_LIMIT,
       query: this.normalizeInputValue(this.queryText),
       traceId: this.normalizeInputValue(this.traceIdText),
       spanId: this.normalizeInputValue(this.spanIdText),
@@ -312,6 +335,33 @@ export default class LogsAnalysis extends Vue {
       }
     });
     return params;
+  }
+
+  // 客户端模糊过滤（仅对已在页面中的选项做过滤，不请求后端）
+  get filteredServiceOptions () {
+    const kw = this.searchService.trim().toLowerCase();
+    if (!kw) {
+      return this.serviceOptions;
+    }
+    return this.serviceOptions.filter((item) =>
+      (item.nameKey ? this.$t(item.nameKey) : item.name).toLowerCase().includes(kw),
+    );
+  }
+
+  get filteredServiceInstanceOptions () {
+    const kw = this.searchServiceInstance.trim().toLowerCase();
+    if (!kw) {
+      return this.serviceInstanceOptions;
+    }
+    return this.serviceInstanceOptions.filter((item) => item.toLowerCase().includes(kw));
+  }
+
+  get filteredHostOptions () {
+    const kw = this.searchHost.trim().toLowerCase();
+    if (!kw) {
+      return this.hostOptions;
+    }
+    return this.hostOptions.filter((item) => item.toLowerCase().includes(kw));
   }
 
   @Watch('globalTime', { deep: true })
@@ -367,24 +417,10 @@ export default class LogsAnalysis extends Vue {
   }
 
   private async applyDefaultListFromChart () {
-    const range = resolveRecentRangeFromCounts(this.$refs.chartGroup?.getVolumeCounts?.(), {
-      interval: this.timeParams.interval,
-      globalToTime: this.timeParams.toTime,
-      limit: DEFAULT_CHART_LIST_LIMIT,
-    });
-    if (!range) {
-      this.showList = false;
-      this.listScope = 'default';
-      this.selectedBucketLabel = '';
-      this.listTimeRange = { fromTimeNs: '', toTimeNs: '' };
-      return;
-    }
+    // 默认情况下按用户选择的全局时间范围查询列表，不再缩成"最近 N 条"窗口
     this.listScope = 'default';
     this.selectedBucketLabel = '';
-    this.listTimeRange = {
-      fromTimeNs: `${range.fromMs * 1_000_000}`,
-      toTimeNs: `${range.toMs * 1_000_000}`,
-    };
+    this.listTimeRange = { fromTimeNs: '', toTimeNs: '' };
     this.showList = true;
     this.clearMinuteRoute();
     this.chartQueryLoading = true;
@@ -405,7 +441,7 @@ export default class LogsAnalysis extends Vue {
   }
 
   private getChartTimeRange () {
-    const { fromTime, toTime } = this.getGlobalTime();
+    const { fromTime, toTime } = this.getGlobalTime({ noBuffer: true });
     return { fromTime, toTime };
   }
 
@@ -431,7 +467,7 @@ export default class LogsAnalysis extends Vue {
   }
 
   private regetGlobalTime () {
-    const { fromTime, toTime, interval } = this.getGlobalTimeV2();
+    const { fromTime, toTime, interval } = this.getGlobalTimeV2({ noBuffer: true });
     this.timeParams = { fromTime, toTime, interval };
   }
 
@@ -983,6 +1019,24 @@ export default class LogsAnalysis extends Vue {
     border: none;
     .el-collapse-item__content {
       padding-bottom: 0;
+    }
+  }
+
+  .filter-search {
+    margin-bottom: 8px;
+
+    :deep(.el-input__inner) {
+      background-color: var(--bg-color03);
+      border-color: var(--border-color-light);
+      border-radius: 4px;
+      height: 28px;
+      line-height: 28px;
+    }
+    :deep(.el-input__prefix) {
+      color: var(--color-text-secondary);
+    }
+    :deep(.el-input__icon) {
+      line-height: 28px;
     }
   }
 

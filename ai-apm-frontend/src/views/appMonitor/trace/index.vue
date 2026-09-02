@@ -57,7 +57,6 @@ import TableList from './table-list.vue'
 import { toAsyncWait } from '@/utils/common';
 import ApmApi from '@/api/service';
 import { cloneDeep, orderBy } from 'lodash';
-import { DEFAULT_CHART_LIST_LIMIT, resolveRecentRangeFromCounts } from '@/utils/chartListRange';
 
 const StaticParams = {
   parentId: '0',
@@ -156,7 +155,7 @@ export default class Trace extends Vue {
         if (data.traceIds) {
           data.traceIds = data.traceIds.slice(0, 100)
         }
-        this.queryParams = { ...StaticParams, ...data, size: DEFAULT_CHART_LIST_LIMIT };
+        this.queryParams = { ...StaticParams, ...data };
       })
       await this.$nextTick()
       await this.$refs.chartGroup?.getData()
@@ -174,12 +173,9 @@ export default class Trace extends Vue {
   }
 
   private async applyDefaultListFromChart () {
-    const range = resolveRecentRangeFromCounts(this.$refs.chartGroup?.getVolumeCounts?.(), {
-      interval: this.timeParams.interval,
-      globalToTime: this.timeParams.toTime,
-      limit: DEFAULT_CHART_LIST_LIMIT,
-    })
-    if (!range) {
+    // 默认情况下按用户选择的完整时间范围查询列表，不再缩成"最近 N 条"窗口
+    const { fromTime, toTime } = this.fullGlobalRange
+    if (!fromTime || !toTime) {
       this.showList = false
       return
     }
@@ -187,9 +183,8 @@ export default class Trace extends Vue {
     this.selectedBucketLabel = ''
     this.queryParams = {
       ...this.queryParams,
-      fromTime: range.fromTime,
-      toTime: range.toTime,
-      size: DEFAULT_CHART_LIST_LIMIT,
+      fromTime: dayjs(fromTime).format('YYYY-MM-DD HH:mm:ss'),
+      toTime: dayjs(toTime).format('YYYY-MM-DD HH:mm:ss'),
     }
     this.clearMinuteRoute()
     this.showList = true
@@ -217,8 +212,14 @@ export default class Trace extends Vue {
   }
 
   private regetGlobalTime () {
-    const { fromTime, toTime, interval } = this.getGlobalTimeV2()
+    const { fromTime, toTime, interval } = this.getGlobalTimeV2({ noBuffer: true })
     this.timeParams = { fromTime, toTime, interval }
+  }
+
+  // 完整选定时间范围（不套 select 模式减的 1 分钟缓冲），用于列表默认查询
+  private get fullGlobalRange () {
+    const { fromTime, toTime } = this.getGlobalTime({ noBuffer: true })
+    return { fromTime, toTime }
   }
 
   // 图表点击事件回调：列表收窄到该时间桶；再次点击同一柱子则取消，回到默认时间窗
@@ -241,7 +242,6 @@ export default class Trace extends Vue {
       ...this.queryParams,
       fromTime,
       toTime: resolvedToTime,
-      size: DEFAULT_CHART_LIST_LIMIT,
     }
     this.selectedBucketLabel = nextLabel
     const isErrorChart = type === 'error'
@@ -318,7 +318,7 @@ export default class Trace extends Vue {
     if (data.traceIds) {
       data.traceIds = data.traceIds.slice(0, 100)
     }
-    this.queryParams = { ...StaticParams, ...data, size: DEFAULT_CHART_LIST_LIMIT }
+    this.queryParams = { ...StaticParams, ...data }
     this.$nextTick(async () => {
       await this.$refs.chartGroup?.getData()
       await this.applyDefaultListFromChart()
