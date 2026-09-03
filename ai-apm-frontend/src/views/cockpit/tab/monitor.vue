@@ -5,12 +5,10 @@
       <div class="toolbar-filter flex-h">
         <span class="toolbar-label">服务</span>
         <el-select
-          v-model="selectedServices"
-          multiple
-          collapse-tags
+          v-model="selectedService"
           clearable
           filterable
-          placeholder="全部服务（可输入服务名过滤）"
+          placeholder="全部服务（单选切换）"
           size="small"
           class="service-select"
           @change="onServiceChange">
@@ -73,32 +71,76 @@
     <div class="rank-row mb-16">
       <div class="section rank-panel bg-color br-4 p-16">
         <div class="section-title flex-h-jc">
-          <span>服务排行 Top 10</span>
+          <span>{{ isSingleService ? `接口排行 Top 10 - ${singleServiceCurrent.service}` : '服务排行 Top 10' }}</span>
           <el-select v-model="rankingMetric" size="mini" class="rank-select" @change="loadRanking">
             <el-option v-for="o in rankingOptions" :key="o.value" :label="o.label" :value="o.value" />
           </el-select>
         </div>
-        <el-table
-          :data="rankingRows"
-          v-loading="rankingLoading"
-          size="small"
-          class="rank-table"
-          @row-click="openDrill">
-          <el-table-column type="index" label="#" width="50"></el-table-column>
-          <el-table-column label="服务" prop="service" min-width="160">
-            <template slot-scope="{ row }">
-              <span class="rank-service cp">{{ row.service }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column label="数值" prop="value" align="right" min-width="120">
-            <template slot-scope="{ row }">{{ formatValue(row.value) }}</template>
-          </el-table-column>
-          <el-table-column label="操作" width="90" align="center">
-            <template slot-scope="{ row }">
-              <span class="blue cp">接口趋势 <i class="el-icon-arrow-right"></i></span>
-            </template>
-          </el-table-column>
-        </el-table>
+        <!-- 单服务时直接替换为接口趋势弹窗内容（图表+列表，默认首个，高度与服务排行一致，可滚动） -->
+        <template v-if="isSingleService">
+          <div v-loading="interfaceRankingLoading" style="height: 260px" class="mb-12">
+            <basic-chart
+              :source="rankingInterfaceActiveSource"
+              :showEmpty="!interfaceRankingLoading && !rankingInterfaceActiveSource.length"
+              :showAxisLabelCount="6"
+              :showLegend="false"
+              :fromTime="timeParams.fromTime"
+              :toTime="timeParams.toTime"
+              :interval="timeParams.interval"
+              style="height: 260px" />
+          </div>
+          <el-table
+            :data="interfaceRankingRows"
+            v-loading="interfaceRankingLoading"
+            size="small"
+            class="rank-table"
+            highlight-current-row
+            :row-class-name="rankingInterfaceRowClass"
+            @row-click="onRankingInterfaceRowClick"
+            max-height="220"
+            style="overflow:auto">
+            <el-table-column type="index" label="#" width="50"></el-table-column>
+            <el-table-column label="接口" prop="name" min-width="220" show-overflow-tooltip>
+              <template slot-scope="{ row }">
+                <span :class="{ 'blue': row.name === rankingInterfaceActive }">{{ row.name }}</span>
+                <span v-if="row.name === rankingInterfaceActive" class="ml-6" style="color:#2962ff;">●</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="今日" prop="today" align="right" min-width="80">
+              <template slot-scope="{ row }">{{ formatValue(row.today) }}</template>
+            </el-table-column>
+            <el-table-column label="昨日" prop="yesterday" align="right" min-width="80">
+              <template slot-scope="{ row }">{{ formatValue(row.yesterday) }}</template>
+            </el-table-column>
+          </el-table>
+          <div v-if="!interfaceRankingLoading && !interfaceRankingRows.length" class="tc mt-12" style="color:var(--color-text-secondary);font-size:12px;">暂无接口数据</div>
+          <div v-if="interfaceRankingRows.length > 1" class="mt-8" style="font-size:12px;color:var(--color-text-secondary);">点击列表切换接口趋势</div>
+        </template>
+        <template v-else>
+          <el-table
+            :data="rankingRows"
+            v-loading="rankingLoading"
+            size="small"
+            class="rank-table"
+            max-height="480"
+            style="overflow:auto"
+            @row-click="openDrill">
+            <el-table-column type="index" label="#" width="50"></el-table-column>
+            <el-table-column label="服务" prop="service" min-width="160">
+              <template slot-scope="{ row }">
+                <span class="rank-service cp">{{ row.service }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="数值" prop="value" align="right" min-width="120">
+              <template slot-scope="{ row }">{{ formatValue(row.value) }}</template>
+            </el-table-column>
+            <el-table-column label="操作" width="90" align="center">
+              <template slot-scope="{ row }">
+                <span class="blue cp">接口趋势 <i class="el-icon-arrow-right"></i></span>
+              </template>
+            </el-table-column>
+          </el-table>
+        </template>
       </div>
       <div class="section workbench-panel bg-color br-4 p-16">
 <!--        <div class="section-title">工作台</div>-->
@@ -136,24 +178,28 @@
       </div>
     </div>
 
-    <!-- 各指标分组：单服务时 JVM 块直接嵌入服务菜单的 JVM 页面 -->
-    <div
-      v-for="(group, gIdx) in trendGroups"
-      :key="group.title"
-      class="section bg-color br-4 p-16 mb-16">
-      <div class="section-title">{{ group.title }}</div>
-      <template v-if="gIdx === 0 && isSingleService">
-        <service-jvm-tab ref="embeddedJvm" :current="singleServiceCurrent" :key="singleServiceCurrent.serviceId" />
-      </template>
-      <div v-else class="trend-grid">
-        <metric-trend-card
-          v-for="item in group.items"
-          :key="item.title"
-          :title="item.title"
-          :source="groupSources[item.title] || []"
-          :loading="groupLoading"
-          :timeParams="timeParams" />
+    <!-- 各指标分组：资源/JVM 全局隐藏（单服务底部嵌入），网络空数据时自动隐藏 -->
+    <template v-for="group in displayedGroups">
+      <div
+        v-if="groupLoading || hasGroupData(group)"
+        :key="group.title"
+        class="section bg-color br-4 p-16 mb-16">
+        <div class="section-title">{{ group.title }}</div>
+        <div class="trend-grid">
+          <metric-trend-card
+            v-for="item in group.items"
+            :key="item.title"
+            :title="item.title"
+            :source="groupSources[item.title] || []"
+            :loading="groupLoading"
+            :timeParams="timeParams" />
+        </div>
       </div>
+    </template>
+    <!-- 单服务时 JVM 数据移至最底部嵌入 -->
+    <div v-if="isSingleService" class="section bg-color br-4 p-16 mb-16">
+      <div class="section-title">资源 / JVM</div>
+      <service-jvm-tab ref="embeddedJvm" :current="singleServiceCurrent" :key="singleServiceCurrent.serviceId" />
     </div>
 
     <!-- 接口趋势下钻：默认展示第一接口，点击列表切换 -->
@@ -240,7 +286,7 @@ import ServiceJvmTab from '@/views/appMonitor/serviceDetail/tab-jvm.vue';
 
 @Component({ components: { MetricKpiCard, MetricTrendCard, CardTrend, BasicChart, ServiceJvmTab } })
 export default class MonitorTab extends Vue {
-  private selectedServices: string[] = [];
+  private selectedService: string = '';
   private serviceOptions: Array<{ label: string; value: string }> = [];
 
   private rankingMetric = 'req';
@@ -251,6 +297,12 @@ export default class MonitorTab extends Vue {
   ];
   private rankingRows: Array<{ service: string; value: number }> = [];
   private rankingLoading = false;
+  // 单服务时直接展示接口趋势（嵌入弹窗同款：图表+列表）
+  private interfaceRankingRows: Array<{ name: string; today: number; yesterday: number }> = [];
+  private interfaceRankingLoading = false;
+  private interfaceRankingLimit = 10;
+  private rankingInterfaceEndpoints: Array<{ name: string; today: number; yesterday: number; todaySeries: any[]; yesterdaySeries: any[] }> = [];
+  private rankingInterfaceActive: string = '';
 
   private drillVisible = false;
   private drillService = '';
@@ -296,11 +348,11 @@ export default class MonitorTab extends Vue {
   ];
 
   private get isSingleService () {
-    return this.selectedServices.length === 1;
+    return !!this.selectedService;
   }
 
   private get singleServiceCurrent () {
-    const name = this.selectedServices[0] || '';
+    const name = this.selectedService || '';
     const directId = this.serviceIdMap[name];
     if (directId && directId !== name) return { serviceId: directId, service: name, name };
     const map: any = (this as any).getBasicServiceMap || {};
@@ -313,12 +365,29 @@ export default class MonitorTab extends Vue {
     return { serviceId: name, service: name, name };
   }
 
+  private get rankingInterfaceActiveSource () {
+    if (!this.rankingInterfaceActive || !this.rankingInterfaceEndpoints.length) {
+      const first = this.rankingInterfaceEndpoints[0];
+      if (!first) return [];
+      return [
+        { name: `${first.name} 今日`, unit: '', color: '#2962ff', data: toSeriesPoints(first.todaySeries) },
+        { name: `${first.name} 昨日`, unit: '', color: '#2962ff', lineType: 'dashed', data: toSeriesPoints(first.yesterdaySeries) },
+      ];
+    }
+    const hit = this.rankingInterfaceEndpoints.find(r => r.name === this.rankingInterfaceActive) || this.rankingInterfaceEndpoints[0];
+    if (!hit) return [];
+    return [
+      { name: `${hit.name} 今日`, unit: '', color: '#2962ff', data: toSeriesPoints(hit.todaySeries) },
+      { name: `${hit.name} 昨日`, unit: '', color: '#2962ff', lineType: 'dashed', data: toSeriesPoints(hit.yesterdaySeries) },
+    ];
+  }
+
   private get timeParams () {
     const { fromTime, toTime, interval } = this.getGlobalTimeV2();
     return { fromTime, toTime, interval };
   }
 
-  // 模块化接口的查询窗口（start/end 为秒级时间戳），服务筛选下推到服务端
+  // 模块化接口的查询窗口（start/end 为秒级时间戳），单服务单选下推到服务端
   private get trendWindow () {
     const { fromTime, toTime, interval } = this.timeParams;
     if (!fromTime || !toTime) {
@@ -328,7 +397,7 @@ export default class MonitorTab extends Vue {
       start: Math.floor(+new Date(fromTime) / 1000),
       end: Math.floor(+new Date(toTime) / 1000),
       interval,
-      serviceNames: this.selectedServices,
+      serviceNames: this.selectedService ? [this.selectedService] : [],
     };
   }
 
@@ -397,14 +466,21 @@ export default class MonitorTab extends Vue {
           { title: 'TCP 重传', metric: 'service.tcp.retransmit', aggs: 'avg' as const, unit: '' },
         ],
       },
-      {
-        title: '实例 / 拓扑',
-        items: [
-          { title: '实例数', metric: 'service.instance.metricsVal', aggs: 'avg' as const, unit: '' },
-          { title: '外部调用错误', metric: 'service.remote.error', aggs: 'sum' as const, unit: '' },
-        ],
-      },
     ];
+  }
+
+  private get displayedGroups () {
+    // 资源/JVM 卡片全局隐藏，单服务时由底部嵌入替代，故卡片仅展示后两组
+    return this.trendGroups.slice(1);
+  }
+
+  private hasGroupData (group: any) {
+    // 网络等 OTLP 指标若 Doris 无数据则隐藏整组，避免空图表
+    return group.items.some((it: any) => {
+      const src = this.groupSources[it.title];
+      if (!src || !src.length) return false;
+      return src.some((s: any) => s.data && s.data.length && s.data.some((p: any) => p.value !== 0 && p.value !== null));
+    });
   }
 
   private get rankMetricMap () {
@@ -605,7 +681,7 @@ export default class MonitorTab extends Vue {
     }
   }
 
-  // 趋势分组卡：一次 /cockpit/metricTrends 拉全部卡片的今日/昨日曲线（单服务时 JVM 块已嵌入服务页，不再请求）
+  // 趋势分组卡：资源/JVM 卡片全局隐藏（单服务时底部嵌入），仅请求依赖调用/网络
   private async loadGroupTrends () {
     const window = this.trendWindow;
     if (!window) {
@@ -613,8 +689,7 @@ export default class MonitorTab extends Vue {
     }
     this.groupLoading = true;
     try {
-      const filteredGroups = this.isSingleService ? this.trendGroups.slice(1) : this.trendGroups;
-      const items = filteredGroups.flatMap((group) => group.items.map((it) => ({ key: it.title, metric: it.metric, aggs: it.aggs })));
+      const items = this.displayedGroups.flatMap((group) => group.items.map((it) => ({ key: it.title, metric: it.metric, aggs: it.aggs })));
       if (!items.length) {
         this.groupSources = {};
         return;
@@ -627,28 +702,18 @@ export default class MonitorTab extends Vue {
           { name: '昨日', unit: row.unit, color: '#2962ff', lineType: 'dashed', data: toSeriesPoints(row.yesterday) },
         ];
       });
-      // 保留已有的 JVM 数据避免闪白，单服务时不覆盖
-      if (this.isSingleService) {
-        const keep: Record<string, Series[]> = {};
-        for (const k in this.groupSources) {
-          if (filteredGroups.some(g => g.items.some(it => it.title === k))) {
-            // 仅保留仍需要的 key，下同
-          }
-        }
-        // 合并：保留非 JVM 的旧值，替换新值
-        this.groupSources = { ...this.groupSources, ...sources };
-        // 清理已隐藏的 JVM 键
-        this.trendGroups[0].items.forEach(it => { delete this.groupSources[it.title]; });
-      } else {
-        this.groupSources = sources;
-      }
+      this.groupSources = sources;
     } finally {
       this.groupLoading = false;
     }
   }
 
-  // 服务排行：一次 /cockpit/serviceRanking，服务筛选由服务端完成
+  // 服务排行：多服务时按服务聚合，单服务时直接展示接口列表
   private async loadRanking () {
+    if (this.isSingleService) {
+      await this.loadInterfaceRanking();
+      return;
+    }
     const window = this.trendWindow;
     if (!window) {
       return;
@@ -660,6 +725,108 @@ export default class MonitorTab extends Vue {
       this.rankingRows = rows.map((r) => ({ service: r.service, value: r.value }));
     } finally {
       this.rankingLoading = false;
+    }
+  }
+
+  private async loadInterfaceRanking () {
+    const window = this.trendWindow;
+    if (!window) {
+      console.warn('[interfaceRanking] window null, skip');
+      return;
+    }
+    const cfg = this.rankMetricMap[this.rankingMetric as keyof typeof this.rankMetricMap];
+    const serviceName = this.singleServiceCurrent.service;
+    const serviceId = this.singleServiceCurrent.serviceId;
+    console.log('[interfaceRanking] start', { rankingMetric: this.rankingMetric, cfg, serviceName, serviceId, window });
+    this.interfaceRankingLoading = true;
+    try {
+      const candidates: Array<{metric:string,aggs:'sum'|'avg'}> = [];
+      if (this.rankingMetric === 'req') {
+        candidates.push({metric:'service.http.cnt',aggs:'sum'},{metric:'service.rpc.cnt',aggs:'sum'},{metric:'service.db.cnt',aggs:'sum'},{metric:'service.redis.cnt',aggs:'sum'},{metric:'service.mq.cnt',aggs:'sum'},{metric:'service.remote.cnt',aggs:'sum'});
+      } else if (this.rankingMetric === 'err') {
+        candidates.push({metric:'service.http.error',aggs:'avg'},{metric:'service.rpc.error',aggs:'avg'},{metric:'service.db.error',aggs:'avg'});
+      } else {
+        const drill = this.resolveDrillMetric(cfg.metric, cfg.aggs);
+        candidates.push({metric:drill.metric, aggs: drill.aggs as any});
+      }
+      let rows: any[] = [];
+      for (const cand of candidates) {
+        console.log('[interfaceRanking] try serviceName', { cand, serviceName });
+        let r = await fetchServiceEndpoints(window, serviceName, cand.metric, cand.aggs, 'resource', this.interfaceRankingLimit);
+        console.log('[interfaceRanking] result serviceName', { cand, size: r?.length });
+        if (r && r.length) { rows = r; break; }
+        if (serviceId && serviceId !== serviceName) {
+          console.log('[interfaceRanking] retry serviceId', { cand, serviceId });
+          const r2 = await fetchServiceEndpoints(window, serviceId, cand.metric, cand.aggs, 'resource', this.interfaceRankingLimit);
+          console.log('[interfaceRanking] result serviceId', { cand, size: r2?.length });
+          if (r2 && r2.length) { rows = r2; break; }
+        }
+      }
+      if (!rows.length) {
+        const drill = this.resolveDrillMetric(cfg.metric, cfg.aggs);
+        console.log('[interfaceRanking] fallback groupBy', drill);
+        let fallback = await fetchServiceEndpoints(window, serviceName, drill.metric, drill.aggs, drill.groupBy, this.interfaceRankingLimit);
+        console.log('[interfaceRanking] fallback result serviceName', { size: fallback?.length });
+        if (fallback && fallback.length) rows = fallback;
+        else if (serviceId && serviceId !== serviceName) {
+          const fallback2 = await fetchServiceEndpoints(window, serviceId, drill.metric, drill.aggs, drill.groupBy, this.interfaceRankingLimit);
+          console.log('[interfaceRanking] fallback result serviceId', { size: fallback2?.length });
+          if (fallback2 && fallback2.length) rows = fallback2;
+        }
+      }
+      // 错误量：无错误时不展示（today/yesterday 均为 0 则过滤，全部为 0 则空列表）
+      if (this.rankingMetric === 'err') {
+        const before = rows.length;
+        rows = rows.filter((r:any) => (r.today || 0) > 0 || (r.yesterday || 0) > 0);
+        if (before !== rows.length) console.log('[interfaceRanking] err filtered zero', { before, after: rows.length });
+      }
+      this.rankingInterfaceEndpoints = rows.map((r:any) => ({
+        name: r.name, today: r.today, yesterday: r.yesterday,
+        todaySeries: r.todaySeries, yesterdaySeries: r.yesterdaySeries,
+      }));
+      this.interfaceRankingRows = rows.map(r => ({
+        name: r.name,
+        today: r.today,
+        yesterday: r.yesterday,
+      }));
+      this.rankingInterfaceActive = rows[0]?.name || '';
+      console.log('[interfaceRanking] done', { rows: rows.length, active: this.rankingInterfaceActive });
+      if (!rows.length) console.warn('[interfaceRanking] empty final', { serviceName, serviceId, metric: cfg.metric, window });
+    } catch (e) {
+      console.error('[interfaceRanking] error', e);
+      this.rankingInterfaceEndpoints = [];
+      this.interfaceRankingRows = [];
+      this.rankingInterfaceActive = '';
+    } finally {
+      this.interfaceRankingLoading = false;
+    }
+  }
+
+  private rankingInterfaceRowClass ({ row }: any) {
+    return row.name === this.rankingInterfaceActive ? 'current-row' : '';
+  }
+
+  private onRankingInterfaceRowClick (row: any) {
+    if (!row || row.name === this.rankingInterfaceActive) return;
+    this.rankingInterfaceActive = row.name;
+  }
+
+  private onInterfaceRowClick (row: any) {
+    // 接口行点击可下钻该接口趋势（复用弹窗，默认选中该接口）
+    const service = this.singleServiceCurrent.serviceId || this.singleServiceCurrent.service;
+    this.drillService = service;
+    this.drillVisible = true;
+    this.drillLoading = true;
+    this.drillActive = row.name;
+    // 若排名接口数据已含时序，可直接定位；否则走常规下钻再选中
+    const hit = this.interfaceRankingRows.find(r => r.name === row.name);
+    if (hit) {
+      // 触发一次完整下钻以加载时序，然后选中
+      this.openDrill({ service }, this.rankMetricMap[this.rankingMetric as keyof typeof this.rankMetricMap]);
+      // 延迟选中（openDrill 会重置 drillActive 为首个，需覆盖）
+      this.$nextTick(() => { this.drillActive = row.name; this.updateDrillChart(); });
+    } else {
+      this.openDrill({ service }, this.rankMetricMap[this.rankingMetric as keyof typeof this.rankMetricMap]);
     }
   }
 
@@ -890,20 +1057,29 @@ export default class MonitorTab extends Vue {
   width: 110px;
 }
 
-// 服务排行（2/3）+ 工作台（1/3）
+// 服务排行（2/3）+ 工作台（1/3）高度保持一致，接口排行可滚动
 .rank-row {
   display: flex;
   align-items: stretch;
+  min-height: 540px;
 
   .rank-panel {
     flex: 2;
     min-width: 0;
+    display: flex;
+    flex-direction: column;
+    // 表格区域可滚动，保持与工作台等高
+    :deep(.el-table) {
+      flex: 1;
+    }
   }
 
   .workbench-panel {
     flex: 1;
     min-width: 0;
     margin-left: 16px;
+    display: flex;
+    flex-direction: column;
   }
 }
 

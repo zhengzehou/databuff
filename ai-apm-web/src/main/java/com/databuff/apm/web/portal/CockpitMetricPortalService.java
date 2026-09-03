@@ -252,13 +252,15 @@ public class CockpitMetricPortalService {
         return new Merged(unit, points);
     }
 
-    /** 单服务回退：按 service_id/serviceCode IN 查询（OTLP 指标常以 service_id 归档） */
+    /** 单服务回退：按 service_id/srcServiceId IN 查询（OTLP 指标常以 *_id 归档） */
     private List<Map<String, Object>> metricChartByServiceId(String metric, String aggs, List<String> serviceNames, long startSec, long endSec, int interval) {
         if (metric.isEmpty() || serviceNames.isEmpty()) return List.of();
         List<String> normalizedIds = serviceNames.stream().map(s -> com.databuff.apm.common.util.PortalServiceIdResolver.normalize(s)).toList();
-        // 先尝试 service_id
-        List<Map<String, Object>> fromId = List.of(Map.of("left", "service_id", "operator", "in", "right", normalizedIds, "connector", "AND"));
-        List<String> byId = List.of("service_id");
+        boolean isDep = isDependencyMetric(metric);
+        String idColumn = isDep ? "srcServiceId" : "service_id";
+        String byColumn = isDep ? "srcServiceId" : "service_id";
+        List<Map<String, Object>> fromId = List.of(Map.of("left", idColumn, "operator", "in", "right", normalizedIds, "connector", "AND"));
+        List<String> byId = List.of(byColumn);
         Map<String, Object> queryA = new LinkedHashMap<>();
         queryA.put("metric", metric);
         queryA.put("from", fromId);
@@ -272,20 +274,22 @@ public class CockpitMetricPortalService {
         body.put("query", Map.of("A", queryA));
         List<Map<String, Object>> r = metricQueryService.metricChart(body);
         if (!r.isEmpty()) {
-            log.info("metricChartByServiceId hit service_id metric={} serviceNames={} size={}", metric, serviceNames, r.size());
+            log.info("metricChartByServiceId hit {} metric={} serviceNames={} size={}", idColumn, metric, serviceNames, r.size());
             return r;
         }
-        // 再尝试 serviceCode（部分服务通过 OTLP 上报至 serviceCode）
-        List<Map<String, Object>> fromCode = List.of(Map.of("left", "serviceCode", "operator", "in", "right", serviceNames, "connector", "AND"));
-        List<String> byCode = List.of("serviceCode");
+        // 再尝试 serviceCode/srcService
+        String codeColumn = isDep ? "srcService" : "serviceCode";
+        String byCode = isDep ? "srcService" : "serviceCode";
+        List<Map<String, Object>> fromCode = List.of(Map.of("left", codeColumn, "operator", "in", "right", isDep ? serviceNames : serviceNames, "connector", "AND"));
+        List<String> byCodeList = List.of(byCode);
         queryA.put("from", fromCode);
-        queryA.put("by", byCode);
+        queryA.put("by", byCodeList);
         body.put("query", Map.of("A", queryA));
         List<Map<String, Object>> r2 = metricQueryService.metricChart(body);
         if (!r2.isEmpty()) {
-            log.info("metricChartByServiceId hit serviceCode metric={} serviceNames={} size={}", metric, serviceNames, r2.size());
+            log.info("metricChartByServiceId hit {} metric={} serviceNames={} size={}", codeColumn, metric, serviceNames, r2.size());
         } else {
-            log.info("metricChartByServiceId miss both service_id/serviceCode metric={} serviceNames={}", metric, serviceNames);
+            log.info("metricChartByServiceId miss both {}/{} metric={} serviceNames={}", idColumn, codeColumn, metric, serviceNames);
         }
         return r2;
     }
@@ -303,6 +307,10 @@ public class CockpitMetricPortalService {
         return metricChart(metric, aggs, serviceNames, groupBy, serviceName, startSec, endSec, interval, TOP_GROUP_LIMIT);
     }
 
+    private static boolean isDependencyMetric(String metric) {
+        return metric != null && (metric.startsWith("service.db") || metric.startsWith("service.redis") || metric.startsWith("service.mq") || metric.startsWith("service.remote") || metric.startsWith("service.config"));
+    }
+
     private List<Map<String, Object>> metricChart(
             String metric, String aggs, List<String> serviceNames,
             String groupBy, String serviceName,
@@ -310,19 +318,23 @@ public class CockpitMetricPortalService {
         if (metric.isEmpty()) {
             return List.of();
         }
+        // 依赖调用类指标归属 srcService（调用方），其余归属 service
+        String filterColumn = isDependencyMetric(metric) ? "srcService" : "service";
         List<Map<String, Object>> from = new ArrayList<>();
         List<String> by = new ArrayList<>();
         if (serviceName != null && !serviceName.isEmpty()) {
-            from.add(Map.of("left", "service", "operator", "=", "right", serviceName, "connector", "AND"));
+            from.add(Map.of("left", filterColumn, "operator", "=", "right", serviceName, "connector", "AND"));
             by.add(groupBy);
         } else if (groupBy != null && !groupBy.isEmpty()) {
             by.add(groupBy);
             if (!serviceNames.isEmpty()) {
-                from.add(Map.of("left", "service", "operator", "in", "right", serviceNames, "connector", "AND"));
+                from.add(Map.of("left", filterColumn, "operator", "in", "right", serviceNames, "connector", "AND"));
             }
         } else if (!serviceNames.isEmpty()) {
-            by.add("service");
-            from.add(Map.of("left", "service", "operator", "in", "right", serviceNames, "connector", "AND"));
+            // 趋势/排行：按调用方聚合
+            String byColumn = isDependencyMetric(metric) ? "srcService" : "service";
+            by.add(byColumn);
+            from.add(Map.of("left", filterColumn, "operator", "in", "right", serviceNames, "connector", "AND"));
         }
         Map<String, Object> queryA = new LinkedHashMap<>();
         queryA.put("metric", metric);
