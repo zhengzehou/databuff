@@ -136,13 +136,16 @@
       </div>
     </div>
 
-    <!-- 各指标分组 -->
+    <!-- 各指标分组：单服务时 JVM 块直接嵌入服务菜单的 JVM 页面 -->
     <div
-      v-for="group in trendGroups"
+      v-for="(group, gIdx) in trendGroups"
       :key="group.title"
       class="section bg-color br-4 p-16 mb-16">
       <div class="section-title">{{ group.title }}</div>
-      <div class="trend-grid">
+      <template v-if="gIdx === 0 && isSingleService">
+        <service-jvm-tab ref="embeddedJvm" :current="singleServiceCurrent" :key="singleServiceCurrent.serviceId" />
+      </template>
+      <div v-else class="trend-grid">
         <metric-trend-card
           v-for="item in group.items"
           :key="item.title"
@@ -233,8 +236,9 @@ import i18n from '@/i18n';
 import dayjs from 'dayjs';
 import { toAsyncWait } from '@/utils/common';
 import { fetchKpiSummary, fetchMetricTrends, fetchServiceRanking, fetchServiceEndpoints, toSeriesPoints, Series } from '@/utils/metricQuery';
+import ServiceJvmTab from '@/views/appMonitor/serviceDetail/tab-jvm.vue';
 
-@Component({ components: { MetricKpiCard, MetricTrendCard, CardTrend, BasicChart } })
+@Component({ components: { MetricKpiCard, MetricTrendCard, CardTrend, BasicChart, ServiceJvmTab } })
 export default class MonitorTab extends Vue {
   private selectedServices: string[] = [];
   private serviceOptions: Array<{ label: string; value: string }> = [];
@@ -290,6 +294,24 @@ export default class MonitorTab extends Vue {
     { level: 2, label: i18n.t('modules.views.alarmCenter.alarm.s_bde77082') as string, cls: 'yellow' },
     { level: 1, label: i18n.t('modules.views.alarmCenter.alarm.s_01ceb3ed') as string, cls: '' },
   ];
+
+  private get isSingleService () {
+    return this.selectedServices.length === 1;
+  }
+
+  private get singleServiceCurrent () {
+    const name = this.selectedServices[0] || '';
+    const directId = this.serviceIdMap[name];
+    if (directId && directId !== name) return { serviceId: directId, service: name, name };
+    const map: any = (this as any).getBasicServiceMap || {};
+    const hit = map[name];
+    if (hit) {
+      if (typeof hit === 'string') return { serviceId: hit, service: name, name };
+      const sid = hit.id || hit.serviceId || hit.service_id || name;
+      return { serviceId: sid, service: name, name };
+    }
+    return { serviceId: name, service: name, name };
+  }
 
   private get timeParams () {
     const { fromTime, toTime, interval } = this.getGlobalTimeV2();
@@ -396,10 +418,21 @@ export default class MonitorTab extends Vue {
   @Watch('globalTimeV2', { deep: true })
   private onGlobalTimeV2Change () {
     this.refreshAll();
+    if (this.isSingleService) {
+      this.$nextTick(() => {
+        const ref: any = (this as any).$refs.embeddedJvm;
+        if (ref && ref.refresh) ref.refresh();
+        else if (ref && ref.fetchAllData) ref.fetchAllData();
+      });
+    }
   }
 
   private created () {
     this.loadServices();
+    // 预热全局服务映射，保证单服务嵌入时能取到准确 serviceId（服务详情页以 serviceId 查询）
+    if (!(this as any).getBasicServiceMap || !Object.keys((this as any).getBasicServiceMap).length) {
+      this.$store.dispatch('Service/GET_BASIC_SERVICE');
+    }
     this.refreshAll();
   }
 
@@ -530,12 +563,21 @@ export default class MonitorTab extends Vue {
       : [...this.coreHidden, title];
   }
 
+  private serviceIdMap: Record<string, string> = {};
+
   private async loadServices () {
     const { result, error } = await toAsyncWait(ServiceApi.getServicesIds({ fromTime: '', toTime: '', ignoreTime: 1 }));
     if (!error && result) {
       const { data = [] } = result;
       if (Array.isArray(data)) {
         this.serviceOptions = data.map((t: any) => ({ label: t.name, value: t.name }));
+        // 保留 name→id 映射供单服务嵌入 JVM 页使用（服务详情页以 serviceId 查询），不污染全局 store
+        this.serviceIdMap = {};
+        data.forEach((t: any) => {
+          const name = t.name || t.service || '';
+          const id = t.id || t.serviceId || t.service_id || name;
+          if (name) this.serviceIdMap[name] = id;
+        });
       }
     }
   }
@@ -563,7 +605,7 @@ export default class MonitorTab extends Vue {
     }
   }
 
-  // 趋势分组卡：一次 /cockpit/metricTrends 拉全部卡片的今日/昨日曲线
+  // 趋势分组卡：一次 /cockpit/metricTrends 拉全部卡片的今日/昨日曲线（单服务时 JVM 块已嵌入服务页，不再请求）
   private async loadGroupTrends () {
     const window = this.trendWindow;
     if (!window) {
@@ -571,7 +613,12 @@ export default class MonitorTab extends Vue {
     }
     this.groupLoading = true;
     try {
-      const items = this.trendGroups.flatMap((group) => group.items.map((it) => ({ key: it.title, metric: it.metric, aggs: it.aggs })));
+      const filteredGroups = this.isSingleService ? this.trendGroups.slice(1) : this.trendGroups;
+      const items = filteredGroups.flatMap((group) => group.items.map((it) => ({ key: it.title, metric: it.metric, aggs: it.aggs })));
+      if (!items.length) {
+        this.groupSources = {};
+        return;
+      }
       const rows = await fetchMetricTrends(window, items);
       const sources: Record<string, Series[]> = {};
       rows.forEach((row) => {
@@ -580,7 +627,21 @@ export default class MonitorTab extends Vue {
           { name: '昨日', unit: row.unit, color: '#2962ff', lineType: 'dashed', data: toSeriesPoints(row.yesterday) },
         ];
       });
-      this.groupSources = sources;
+      // 保留已有的 JVM 数据避免闪白，单服务时不覆盖
+      if (this.isSingleService) {
+        const keep: Record<string, Series[]> = {};
+        for (const k in this.groupSources) {
+          if (filteredGroups.some(g => g.items.some(it => it.title === k))) {
+            // 仅保留仍需要的 key，下同
+          }
+        }
+        // 合并：保留非 JVM 的旧值，替换新值
+        this.groupSources = { ...this.groupSources, ...sources };
+        // 清理已隐藏的 JVM 键
+        this.trendGroups[0].items.forEach(it => { delete this.groupSources[it.title]; });
+      } else {
+        this.groupSources = sources;
+      }
     } finally {
       this.groupLoading = false;
     }

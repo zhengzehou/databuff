@@ -226,9 +226,68 @@ public class CockpitMetricPortalService {
                 buckets.merge(point.t(), point.v(), Double::sum);
             }
         }
+        // 单服务且首轮无有效点位，回退尝试 service_id/serviceCode 维度
+        if (buckets.isEmpty() && serviceNames.size() == 1) {
+            log.info("mergedSeries empty for service={} metric={}, retry with service_id/serviceCode", serviceNames, item.metric());
+            List<Map<String, Object>> retrySeries = metricChartByServiceId(item.metric(), item.aggs(), serviceNames, startSec, endSec, window.interval());
+            buckets.clear();
+            unit = "";
+            for (Map<String, Object> raw : retrySeries) {
+                if (unit.isEmpty()) {
+                    unit = readUnit(raw);
+                }
+                for (TrendPoint point : readPoints(raw)) {
+                    buckets.merge(point.t(), point.v(), Double::sum);
+                }
+            }
+            if (!buckets.isEmpty()) {
+                log.info("mergedSeries retry hit serviceNames={} metric={} points={}", serviceNames, item.metric(), buckets.size());
+            }
+        }
         List<TrendPoint> points = new ArrayList<>(buckets.size());
         buckets.forEach((t, v) -> points.add(new TrendPoint(t, v)));
+        if (points.isEmpty() && !serviceNames.isEmpty()) {
+            log.info("mergedSeries still empty serviceNames={} metric={} window={}-{} (via service/service_id)", serviceNames, item.metric(), startSec, endSec);
+        }
         return new Merged(unit, points);
+    }
+
+    /** 单服务回退：按 service_id/serviceCode IN 查询（OTLP 指标常以 service_id 归档） */
+    private List<Map<String, Object>> metricChartByServiceId(String metric, String aggs, List<String> serviceNames, long startSec, long endSec, int interval) {
+        if (metric.isEmpty() || serviceNames.isEmpty()) return List.of();
+        List<String> normalizedIds = serviceNames.stream().map(s -> com.databuff.apm.common.util.PortalServiceIdResolver.normalize(s)).toList();
+        // 先尝试 service_id
+        List<Map<String, Object>> fromId = List.of(Map.of("left", "service_id", "operator", "in", "right", normalizedIds, "connector", "AND"));
+        List<String> byId = List.of("service_id");
+        Map<String, Object> queryA = new LinkedHashMap<>();
+        queryA.put("metric", metric);
+        queryA.put("from", fromId);
+        queryA.put("aggs", aggs);
+        queryA.put("by", byId);
+        queryA.put("order", Map.of("limit", TOP_GROUP_LIMIT));
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("start", startSec);
+        body.put("end", endSec);
+        body.put("interval", interval);
+        body.put("query", Map.of("A", queryA));
+        List<Map<String, Object>> r = metricQueryService.metricChart(body);
+        if (!r.isEmpty()) {
+            log.info("metricChartByServiceId hit service_id metric={} serviceNames={} size={}", metric, serviceNames, r.size());
+            return r;
+        }
+        // 再尝试 serviceCode（部分服务通过 OTLP 上报至 serviceCode）
+        List<Map<String, Object>> fromCode = List.of(Map.of("left", "serviceCode", "operator", "in", "right", serviceNames, "connector", "AND"));
+        List<String> byCode = List.of("serviceCode");
+        queryA.put("from", fromCode);
+        queryA.put("by", byCode);
+        body.put("query", Map.of("A", queryA));
+        List<Map<String, Object>> r2 = metricQueryService.metricChart(body);
+        if (!r2.isEmpty()) {
+            log.info("metricChartByServiceId hit serviceCode metric={} serviceNames={} size={}", metric, serviceNames, r2.size());
+        } else {
+            log.info("metricChartByServiceId miss both service_id/serviceCode metric={} serviceNames={}", metric, serviceNames);
+        }
+        return r2;
     }
 
     /**
