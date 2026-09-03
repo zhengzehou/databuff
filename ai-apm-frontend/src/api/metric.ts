@@ -130,6 +130,18 @@ export default {
     })
   },
 
+  // 批量指标查询：一次请求返回多个指标的时序（对应后端 /cockpit/metricBatch）。
+  // bodies 为扁平化的指标请求体列表（与 getMetricChart 单个请求同构），
+  // 返回与入参位置对齐的 List<List<series>>，每个 series 形如
+  // { values:[[tsMillis, v], ...], tags:{...}, units:["time","<unit>"] }。
+  metricBatch: (bodies: any[]): AxiosPromise => {
+    return http.request({
+      url: '/cockpit/metricBatch',
+      method: 'post',
+      data: bodies,
+    })
+  },
+
   // 查询单个指标趋势图数据
   getMetricChart: (_data: MetricTypes.MetricChartParams): AxiosPromise => {
     let data = { ..._data }

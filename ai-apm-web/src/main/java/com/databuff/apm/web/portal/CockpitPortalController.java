@@ -1,6 +1,7 @@
 package com.databuff.apm.web.portal;
 
 import com.databuff.apm.web.cockpit.TrafficLightService;
+import com.databuff.apm.web.metric.MetricQueryService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -9,6 +10,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -17,12 +19,15 @@ public class CockpitPortalController {
 
     private final CockpitPortalService cockpitPortalService;
     private final TrafficLightService trafficLightService;
+    private final MetricQueryService metricQueryService;
 
     public CockpitPortalController(
             CockpitPortalService cockpitPortalService,
-            TrafficLightService trafficLightService) {
+            TrafficLightService trafficLightService,
+            MetricQueryService metricQueryService) {
         this.cockpitPortalService = cockpitPortalService;
         this.trafficLightService = trafficLightService;
+        this.metricQueryService = metricQueryService;
     }
 
     @PostMapping("/trafficLight")
@@ -138,6 +143,40 @@ public class CockpitPortalController {
     @PostMapping("/countServiceAlarmsTotal")
     public Map<String, Object> countServiceAlarmsTotal(@RequestBody Map<String, Object> body) {
         return portalEnvelope(cockpitPortalService.countServiceAlarmsTotal(body));
+    }
+
+    /**
+     * 批量指标查询：一次请求返回多个指标的时序，避免前端逐卡片发请求。
+     * 入参为扁平化的指标请求体列表（与 /metrics/exploreMetricByGroupGraph 单个请求同构），
+     * 返回与入参位置对齐的 List<List<series>>，每个 series 形如
+     * { values:[[tsMillis, v], ...], tags:{...}, units:["time","<unit>"] }。
+     */
+    @PostMapping("/metricBatch")
+    public Map<String, Object> metricBatch(@RequestBody List<Map<String, Object>> bodies) {
+        List<List<Map<String, Object>>> result = bodies.stream()
+                .map(body -> metricQueryService.metricChart(normalizeChartBody(body)))
+                .toList();
+        return portalEnvelope(result);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> normalizeChartBody(Map<String, Object> body) {
+        if (body.get("query") instanceof Map<?, ?>) {
+            return body;
+        }
+        Map<String, Object> normalized = new LinkedHashMap<>(body);
+        Object metric = body.get("metric");
+        if (metric == null) {
+            return normalized;
+        }
+        Map<String, Object> queryA = new LinkedHashMap<>();
+        for (String key : List.of("metric", "from", "by", "aggs", "types", "order")) {
+            if (body.containsKey(key)) {
+                queryA.put(key, body.get(key));
+            }
+        }
+        normalized.put("query", Map.of("A", queryA));
+        return normalized;
     }
 
     private static Map<String, Object> portalEnvelope(Object data) {

@@ -18,6 +18,7 @@ export default class ContComp extends Vue {
     { label: i18n.t('modules.views.cockpit.component.s_97dbb162') as string, labelKey: 'modules.views.cockpit.component.s_97dbb162', value: 'fault' },
     { label: i18n.t('modules.views.cockpit.component.s_1bb33934') as string, labelKey: 'modules.views.cockpit.component.s_1bb33934', value: 'overview' },
     { label: i18n.t('modules.views.alarmCenter.alarm.s_aa0eab9d') as string, labelKey: 'modules.views.alarmCenter.alarm.s_aa0eab9d', value: 'alarm' },
+    { label: '运维监控', value: 'monitor' },
   ];
 
   private created() {
