@@ -1,73 +1,37 @@
 <template>
   <div class="trend-card" v-loading="loading">
     <div class="trend-title">{{ title }}</div>
-    <div class="trend-cont">
+    <div class="trend-cont" :style="{ height: height + 'px' }">
       <basic-chart
         :source="source"
         :showEmpty="!loading && !source.length"
         :showAxisLabelCount="6"
         :showLegend="true"
         :tooltipEnterable="true"
-        :height="height" />
+        :dataZoom="true"
+        :brushMode="false"
+        :fromTime="timeParams.fromTime"
+        :toTime="timeParams.toTime"
+        :interval="timeParams.interval" />
     </div>
   </div>
 </template>
 
 <script lang="ts">
-import { Vue, Component, Prop, Watch } from 'vue-property-decorator';
+import { Vue, Component, Prop } from 'vue-property-decorator';
 import BasicChart from '@/components/charts/basic-chart.vue';
-import { getTrendSeries, Series } from '@/utils/metricQuery';
+import { Series } from '@/utils/metricQuery';
 
+// 趋势卡片：纯展示组件，source 由父组件按模块批量加载后传入
+// （今日实线带面积、昨日同色虚线，时间轴已对齐）
 @Component({ components: { BasicChart } })
 export default class MetricTrendCard extends Vue {
   @Prop({ default: '' }) private title!: string;
-  @Prop({ default: '' }) private metric!: string;
-  @Prop({ default: 'sum' }) private aggs!: 'sum' | 'avg';
-  @Prop({ default: '' }) private unit!: string;
-  @Prop({ default: false }) private slaMode!: boolean;
-  @Prop({ default: () => [] }) private serviceNames!: string[];
+  @Prop({ default: () => [] }) private source!: Series[];
+  @Prop({ default: false }) private loading!: boolean;
   @Prop({ default: () => ({}) }) private timeParams!: any;
-  @Prop({ default: 200 }) private height!: number;
-
-  private loading = false;
-  private source: any[] = [];
-
-  private get transform () {
-    return this.slaMode ? (v: number) => 100 - v : undefined;
-  }
-
-  @Watch('timeParams', { deep: true })
-  @Watch('serviceNames', { deep: true })
-  private onChanged () {
-    this.load();
-  }
-
-  private created () {
-    this.load();
-  }
-
-  private async load () {
-    const { fromTime, toTime, interval } = this.timeParams;
-    if (!fromTime || !toTime) {
-      return;
-    }
-    const duration = +new Date(toTime) - +new Date(fromTime);
-    const yFrom = dayjs(+new Date(fromTime) - duration).format('YYYY-MM-DD HH:mm:ss');
-    const yTo = dayjs(+new Date(toTime) - duration).format('YYYY-MM-DD HH:mm:ss');
-    this.loading = true;
-    try {
-      const [today, yesterday]: [Series, Series] = await Promise.all([
-        getTrendSeries(this.metric, this.aggs, fromTime, toTime, interval, this.serviceNames, this.transform),
-        getTrendSeries(this.metric, this.aggs, yFrom, yTo, interval, this.serviceNames, this.transform),
-      ]);
-      this.source = [
-        { name: '今日', unit: this.unit, area: true, color: '#2962ff', data: today.data },
-        { name: '昨日', unit: this.unit, color: '#c0c4cc', data: yesterday.data },
-      ];
-    } finally {
-      this.loading = false;
-    }
-  }
+  // 图表高度（px）。basic-chart 撑满容器，容器高度需显式指定，否则在 grid 布局中会被压缩为 0。
+  @Prop({ default: 240 }) private height!: number;
 }
 </script>
 
@@ -75,7 +39,6 @@ export default class MetricTrendCard extends Vue {
 .trend-card {
   display: flex;
   flex-direction: column;
-  height: 100%;
   padding: 12px 12px 4px;
   background-color: var(--bg-color);
   border: 1px solid var(--border-color-light);
@@ -90,7 +53,7 @@ export default class MetricTrendCard extends Vue {
   }
 
   .trend-cont {
-    flex: 1;
+    flex: none;
     min-height: 0;
   }
 }

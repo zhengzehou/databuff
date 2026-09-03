@@ -3865,6 +3865,28 @@ public final class MetricQueryBuilder {
         };
     }
 
+    /**
+     * IN 过滤：value 为集合时生成 IN 子句（多服务名等 OR 语义筛选场景）。
+     * String 入参仍走上面的单值分支。
+     */
+    public static String metricFilterClause(String column, String operator, Object value) {
+        if (!(value instanceof java.util.Collection<?> values)) {
+            return metricFilterClause(column, operator, value == null ? "" : String.valueOf(value));
+        }
+        String col = MetricIdentifierParser.toColumnName(column);
+        if (values.isEmpty()) {
+            return " AND 1 = 0 ";
+        }
+        StringBuilder joined = new StringBuilder();
+        for (Object v : values) {
+            if (joined.length() > 0) {
+                joined.append(", ");
+            }
+            joined.append('\'').append(escapeLiteral(String.valueOf(v))).append('\'');
+        }
+        return " AND `" + col + "` IN (" + joined + ") ";
+    }
+
     private static String normalizeMetricFilterOperator(String operator) {
         if (operator == null || operator.isBlank()) {
             return "=";

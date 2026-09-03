@@ -2,7 +2,7 @@ import Vue from 'vue';
 import Router, { RouteConfig, RouterOptions, Route } from 'vue-router';
 import store from '../store/index';
 import { getToken, removeTokenAndCid, setTokenAndCid } from '@/utils/jsCookie';
-import App from '@/main';
+import { Message } from 'element-ui';
 import { EventBus } from '@/utils/common';
 import AuthBuilder from '@/utils/auth';
 import dayjs from 'dayjs'
@@ -278,7 +278,7 @@ router.beforeEach(async (to: any, from, next) => {
             formatMenusSource()
           }
         } catch (err: any) {
-          App.$message.error(`登录失败: ${err.message}`);
+          Message.error(`登录失败: ${err.message}`);
           removeTokenAndCid();
           next({
             path: '/login',

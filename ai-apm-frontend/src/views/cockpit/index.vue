@@ -34,10 +34,10 @@ const TAB_COMPONENTS: any = {
   },
 })
 export default class Cockpit extends Vue {
-  private activeTab = 'fault';
+  private activeTab = 'monitor';
 
   private get currentComp () {
-    return TAB_COMPONENTS[this.activeTab] || Fault;
+    return TAB_COMPONENTS[this.activeTab] || Monitor;
   }
 
   private created () {

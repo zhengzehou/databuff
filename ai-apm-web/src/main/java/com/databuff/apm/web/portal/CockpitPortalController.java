@@ -1,7 +1,6 @@
 package com.databuff.apm.web.portal;
 
 import com.databuff.apm.web.cockpit.TrafficLightService;
-import com.databuff.apm.web.metric.MetricQueryService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -10,7 +9,6 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -19,15 +17,15 @@ public class CockpitPortalController {
 
     private final CockpitPortalService cockpitPortalService;
     private final TrafficLightService trafficLightService;
-    private final MetricQueryService metricQueryService;
+    private final CockpitMetricPortalService cockpitMetricService;
 
     public CockpitPortalController(
             CockpitPortalService cockpitPortalService,
             TrafficLightService trafficLightService,
-            MetricQueryService metricQueryService) {
+            CockpitMetricPortalService cockpitMetricService) {
         this.cockpitPortalService = cockpitPortalService;
         this.trafficLightService = trafficLightService;
-        this.metricQueryService = metricQueryService;
+        this.cockpitMetricService = cockpitMetricService;
     }
 
     @PostMapping("/trafficLight")
@@ -146,37 +144,39 @@ public class CockpitPortalController {
     }
 
     /**
-     * 批量指标查询：一次请求返回多个指标的时序，避免前端逐卡片发请求。
-     * 入参为扁平化的指标请求体列表（与 /metrics/exploreMetricByGroupGraph 单个请求同构），
-     * 返回与入参位置对齐的 List<List<series>>，每个 series 形如
-     * { values:[[tsMillis, v], ...], tags:{...}, units:["time","<unit>"] }。
+     * KPI 卡汇总：一次返回多个指标的今日/昨日聚合值，支持服务筛选。
+     * 入参 { start, end, interval, serviceNames, items:[{key, metric, aggs}] }。
      */
-    @PostMapping("/metricBatch")
-    public Map<String, Object> metricBatch(@RequestBody List<Map<String, Object>> bodies) {
-        List<List<Map<String, Object>>> result = bodies.stream()
-                .map(body -> metricQueryService.metricChart(normalizeChartBody(body)))
-                .toList();
-        return portalEnvelope(result);
+    @PostMapping("/kpiSummary")
+    public Map<String, Object> kpiSummary(@RequestBody Map<String, Object> body) {
+        return portalEnvelope(cockpitMetricService.kpiSummary(body));
     }
 
-    @SuppressWarnings("unchecked")
-    private static Map<String, Object> normalizeChartBody(Map<String, Object> body) {
-        if (body.get("query") instanceof Map<?, ?>) {
-            return body;
-        }
-        Map<String, Object> normalized = new LinkedHashMap<>(body);
-        Object metric = body.get("metric");
-        if (metric == null) {
-            return normalized;
-        }
-        Map<String, Object> queryA = new LinkedHashMap<>();
-        for (String key : List.of("metric", "from", "by", "aggs", "types", "order")) {
-            if (body.containsKey(key)) {
-                queryA.put(key, body.get(key));
-            }
-        }
-        normalized.put("query", Map.of("A", queryA));
-        return normalized;
+    /**
+     * 多指标趋势：核心趋势 / 趋势分组卡共用，返回各指标今日/昨日时序（昨日已对齐今日时间轴）。
+     * 入参同 /kpiSummary。
+     */
+    @PostMapping("/metricTrends")
+    public Map<String, Object> metricTrends(@RequestBody Map<String, Object> body) {
+        return portalEnvelope(cockpitMetricService.metricTrends(body));
+    }
+
+    /**
+     * 服务排行：按服务分组聚合单指标，返回 Top N（含可选分桶序列）。
+     * 入参 { start, end, interval, serviceNames, metric, aggs, limit, includeSeries }。
+     */
+    @PostMapping("/serviceRanking")
+    public Map<String, Object> serviceRanking(@RequestBody Map<String, Object> body) {
+        return portalEnvelope(cockpitMetricService.serviceRanking(body));
+    }
+
+    /**
+     * 接口趋势下钻：单服务按维度（resource 等）分组，返回 Top N 接口今日/昨日序列与聚合值。
+     * 入参 { start, end, interval, service, metric, aggs, groupBy, limit }。
+     */
+    @PostMapping("/serviceEndpoints")
+    public Map<String, Object> serviceEndpoints(@RequestBody Map<String, Object> body) {
+        return portalEnvelope(cockpitMetricService.serviceEndpoints(body));
     }
 
     private static Map<String, Object> portalEnvelope(Object data) {

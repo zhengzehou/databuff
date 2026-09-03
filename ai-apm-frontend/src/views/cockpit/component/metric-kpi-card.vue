@@ -1,7 +1,16 @@
 <template>
   <div class="kpi-card" :class="{ 'is-drillable': !!drill }" v-loading="loading">
-    <div class="kpi-title" :title="title">{{ title }}</div>
-    <div class="kpi-value">
+    <div class="kpi-title">
+      <span class="kpi-title-text" :title="title">{{ title }}</span>
+      <el-tooltip v-if="tip" :content="tip" placement="top">
+        <i class="el-icon-question kpi-tip"></i>
+      </el-tooltip>
+    </div>
+    <div
+      class="kpi-value"
+      :class="{ 'is-clickable': !!drill }"
+      :title="drill ? '点击查看服务明细' : ''"
+      @click="drill && onDrill()">
       {{ displayValue }}<span v-if="unit" class="kpi-unit">{{ unit }}</span>
     </div>
     <div class="kpi-delta" :class="deltaClass">
@@ -9,40 +18,36 @@
       <span class="kpi-delta-val">{{ deltaText }}</span>
       <span class="kpi-delta-label">较昨日</span>
     </div>
-    <div v-if="drill" class="kpi-drill" @click.stop="onDrill">
-      下钻 <i class="el-icon-arrow-right"></i>
-    </div>
   </div>
 </template>
 
 <script lang="ts">
-import { Vue, Component, Prop, Watch } from 'vue-property-decorator';
-import dayjs from 'dayjs';
-import { getAggregate } from '@/utils/metricQuery';
+import { Vue, Component, Prop } from 'vue-property-decorator';
 
+// KPI 卡片：纯展示组件，数据由父组件按模块批量加载后传入
 @Component
 export default class MetricKpiCard extends Vue {
   @Prop({ default: '' }) private title!: string;
-  @Prop({ default: '' }) private metric!: string;
-  @Prop({ default: 'sum' }) private aggs!: 'sum' | 'avg';
   @Prop({ default: '' }) private unit!: string;
-  @Prop({ default: false }) private slaMode!: boolean; // transform: 100 - v
   @Prop({ default: true }) private higherIsBetter!: boolean;
-  @Prop({ default: () => [] }) private serviceNames!: string[];
-  @Prop({ default: () => ({}) }) private timeParams!: any;
   // 下钻配置：存在时卡片可点击，点击后向父组件抛出 drill 事件（携带本对象）。
   @Prop({ default: null }) private drill!: any;
+  // 计算规则提示：鼠标悬浮在标题旁的问号图标上时展示
+  @Prop({ default: '' }) private tip!: string;
+  // 今日/昨日聚合值（{ today, yesterday }），由父组件批量请求后下发
+  @Prop({ default: undefined }) private value!: { today: number; yesterday: number } | undefined;
+  @Prop({ default: false }) private loading!: boolean;
 
-  private loading = false;
-  private today = 0;
-  private yesterday = 0;
+  private get today () {
+    return this.value ? this.value.today : 0;
+  }
 
-  private get transform () {
-    return this.slaMode ? (v: number) => 100 - v : undefined;
+  private get yesterday () {
+    return this.value ? this.value.yesterday : 0;
   }
 
   private get displayValue () {
-    if (this.loading) {
+    if (this.loading || !this.value) {
       return '-';
     }
     return this.formatNumber(this.today);
@@ -56,7 +61,7 @@ export default class MetricKpiCard extends Vue {
   }
 
   private get deltaText () {
-    if (this.loading) {
+    if (this.loading || !this.value) {
       return '-';
     }
     const d = this.delta;
@@ -81,37 +86,6 @@ export default class MetricKpiCard extends Vue {
     return new Intl.NumberFormat().format(Math.round(v));
   }
 
-  @Watch('timeParams', { deep: true })
-  @Watch('serviceNames', { deep: true })
-  private onChanged () {
-    this.load();
-  }
-
-  private created () {
-    this.load();
-  }
-
-  private async load () {
-    const { fromTime, toTime, interval } = this.timeParams;
-    if (!fromTime || !toTime) {
-      return;
-    }
-    const duration = +new Date(toTime) - +new Date(fromTime);
-    const yFrom = dayjs(+new Date(fromTime) - duration).format('YYYY-MM-DD HH:mm:ss');
-    const yTo = dayjs(+new Date(toTime) - duration).format('YYYY-MM-DD HH:mm:ss');
-    this.loading = true;
-    try {
-      const [t, y] = await Promise.all([
-        getAggregate(this.metric, this.aggs, fromTime, toTime, interval, this.serviceNames, this.transform),
-        getAggregate(this.metric, this.aggs, yFrom, yTo, interval, this.serviceNames, this.transform),
-      ]);
-      this.today = t;
-      this.yesterday = y;
-    } finally {
-      this.loading = false;
-    }
-  }
-
   private onDrill () {
     if (this.drill) {
       this.$emit('drill', { ...this.drill, title: this.title });
@@ -131,7 +105,7 @@ export default class MetricKpiCard extends Vue {
   cursor: default;
 
   &.is-drillable {
-    cursor: pointer;
+    cursor: default;
   }
 
   & + .kpi-card {
@@ -139,11 +113,28 @@ export default class MetricKpiCard extends Vue {
   }
 
   .kpi-title {
+    display: flex;
+    align-items: center;
     font-size: 13px;
     color: var(--color-text-secondary);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+
+    .kpi-title-text {
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .kpi-tip {
+      flex: none;
+      margin-left: 4px;
+      cursor: help;
+      color: var(--color-text-placeholder);
+
+      &:hover {
+        color: var(--color-text-link);
+      }
+    }
   }
 
   .kpi-value {
@@ -152,6 +143,14 @@ export default class MetricKpiCard extends Vue {
     font-weight: 600;
     line-height: 1.1;
     color: var(--color-text-primary);
+
+    &.is-clickable {
+      cursor: pointer;
+
+      &:hover {
+        color: var(--color-text-link);
+      }
+    }
   }
 
   .kpi-unit {
@@ -179,22 +178,6 @@ export default class MetricKpiCard extends Vue {
     }
     .kpi-delta-label {
       color: var(--color-text-secondary);
-    }
-  }
-
-  .kpi-drill {
-    margin-top: 8px;
-    font-size: 12px;
-    color: var(--color-text-link);
-    display: inline-flex;
-    align-items: center;
-
-    &:hover {
-      opacity: 0.8;
-    }
-
-    i {
-      margin-left: 2px;
     }
   }
 }

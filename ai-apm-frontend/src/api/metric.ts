@@ -130,16 +130,19 @@ export default {
     })
   },
 
-  // 批量指标查询：一次请求返回多个指标的时序（对应后端 /cockpit/metricBatch）。
-  // bodies 为扁平化的指标请求体列表（与 getMetricChart 单个请求同构），
-  // 返回与入参位置对齐的 List<List<series>>，每个 series 形如
-  // { values:[[tsMillis, v], ...], tags:{...}, units:["time","<unit>"] }。
-  metricBatch: (bodies: any[]): AxiosPromise => {
-    return http.request({
-      url: '/cockpit/metricBatch',
-      method: 'post',
-      data: bodies,
-    })
+  // 运维监控看板模块化接口（后端按页面数据模块拆分，全部支持 serviceNames 服务筛选）
+  // start/end 为秒级时间戳；items 为 [{key, metric, aggs}] 指标项列表
+  kpiSummary: (data: any): AxiosPromise => {
+    return http.request({ url: '/cockpit/kpiSummary', method: 'post', data })
+  },
+  metricTrends: (data: any): AxiosPromise => {
+    return http.request({ url: '/cockpit/metricTrends', method: 'post', data })
+  },
+  serviceRanking: (data: any): AxiosPromise => {
+    return http.request({ url: '/cockpit/serviceRanking', method: 'post', data })
+  },
+  serviceEndpoints: (data: any): AxiosPromise => {
+    return http.request({ url: '/cockpit/serviceEndpoints', method: 'post', data })
   },
 
   // 查询单个指标趋势图数据

@@ -329,9 +329,6 @@ public class MetricQueryService {
         if ("exceptionName".equals(groupBy)) {
             return "errorType";
         }
-        if ("service.http".equals(measurement) && "resource".equals(groupBy)) {
-            return "url";
-        }
         return MetricIdentifierParser.toColumnName(groupBy);
     }
 
@@ -345,7 +342,7 @@ public class MetricQueryService {
                 continue;
             }
             clause.append(MetricQueryBuilder.metricFilterClause(
-                    normalizeFilterColumn(filter.left()), filter.operator(), String.valueOf(filter.right())));
+                    normalizeFilterColumn(filter.left()), filter.operator(), filter.right()));
         }
         return clause.toString();
     }

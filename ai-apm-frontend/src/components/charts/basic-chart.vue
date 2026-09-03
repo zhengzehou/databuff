@@ -182,6 +182,7 @@ export default class BasicChart extends Vue {
   @Prop({ default: 1.5 }) private lineWidth!: number;   // (选) 折线图line宽度
   @Prop({ default: true }) private useXAxisLabelFormat!: boolean;   // (选) 是否默认使用x轴格式化
   @Prop({ default: null }) private yAxisSplitNum!: number;   // (选) y轴splitNumber数量
+  @Prop({ default: false }) private dataZoom!: boolean;      // (选) 是否显示时间轴缩放滑块（拖动选择时间范围，仅缩放视图，不重新请求）
   @Prop({ default: false }) private textSmallMode!: number;   // (选) 文本字体小号模式
   @Prop({ default: true }) private brushMode!: boolean;      // (选) 是否自动开启brush
   @Prop({ default: 8 }) private showAxisLabelCount!: number;  // (选) 显示x轴label的最大个数
@@ -548,32 +549,39 @@ export default class BasicChart extends Vue {
       }
     }
     // yAxis
-    const yAxisOption: any[] = (yAxisUnits.length ? yAxisUnits : ['']).map((unit: string, i) => ({
-      type: 'value',
-      // splitNumber: 2,
-      minInterval: this.yAxisMinInterval,
-      min: this.min,
-      max: this.max,
-      axisLine: { show: false },
-      axisTick: { show: false },
-      splitLine: {
-        show: i === 0,
-        lineStyle: { color: this.themeVars.borderColorLighter, type: 'dashed' },
-      },
-      axisLabel: {
-        show: i < 2,
-        color: this.themeVars.axisLabelColor,
-        fontSize: this.containerSize.fontSize,
-        formatter: (val: number) => {
-          const _value = this.valTickFormat(this.valueAbs ? Math.abs(val) : val, unit, true)
-          if (!this.yAxisLabels.length) {
-            return _value
-          }
-          const t: any = this.yAxisLabels.find(s => val === s.value) || {}
-          return t.label || _value
+    // 支持在 source 中显式指定 yAxisIndex（多指标同轴时各自独立缩放）；
+    // 坐标轴数量取「不同单位数」与「显式指定的最大轴索引+1」的较大值。
+    const maxYAxisIndex = source.reduce(
+      (max: number, item: any) => Math.max(max, typeof item.yAxisIndex === 'number' ? item.yAxisIndex : 0), 0);
+    const yAxisCount = Math.max(yAxisUnits.length ? yAxisUnits.length : 1, maxYAxisIndex + 1);
+    const yAxisOption: any[] = Array.from({ length: yAxisCount }, (_, i) => {
+      const unit = yAxisUnits[i] || '';
+      return {
+        type: 'value',
+        minInterval: this.yAxisMinInterval,
+        min: this.min,
+        max: this.max,
+        axisLine: { show: false },
+        axisTick: { show: false },
+        splitLine: {
+          show: i === 0,
+          lineStyle: { color: this.themeVars.borderColorLighter, type: 'dashed' },
         },
-      },
-    }));
+        axisLabel: {
+          show: i < 3,
+          color: this.themeVars.axisLabelColor,
+          fontSize: this.containerSize.fontSize,
+          formatter: (val: number) => {
+            const _value = this.valTickFormat(this.valueAbs ? Math.abs(val) : val, unit, true)
+            if (!this.yAxisLabels.length) {
+              return _value
+            }
+            const t: any = this.yAxisLabels.find(s => val === s.value) || {}
+            return t.label || _value
+          },
+        },
+      };
+    });
     if (this.yAxisSplitNum && typeof this.yAxisSplitNum === 'number') {
       yAxisOption.forEach(i => i.splitNumber = this.yAxisSplitNum);
     }
@@ -592,7 +600,9 @@ export default class BasicChart extends Vue {
       const color = item.color || this.chartColors[idx % this.chartColors.length]
       const symbol = item.symbol || 'emptyCircle'
       const symbolSize = item.symbolSize || 4
-      const yAxisIndex = yAxisUnits.findIndex(t => t === (item.unit || ''))
+      const yAxisIndex = typeof item.yAxisIndex === 'number'
+        ? item.yAxisIndex
+        : yAxisUnits.findIndex(t => t === (item.unit || ''))
       const markArea = item.markArea ? {
         ...item.markArea,
         label: {
@@ -636,6 +646,7 @@ export default class BasicChart extends Vue {
         symbolSize,
         lineStyle: {
           width: this.lineWidth || 1,
+          type: item.lineType || 'solid',
           // 折线数据大小相同时，会导致折线无法正常显示
           // shadowColor: formatToHexOpacity(color, .2),
           // shadowBlur: 2,
@@ -781,6 +792,27 @@ export default class BasicChart extends Vue {
     if (this.brushMode) {
       option.toolbox = { show: false };
       option.brush = brushOption;
+    }
+    if (this.dataZoom) {
+      // 时间轴缩放：底部滑块 + 鼠标滚轮/拖拽平移，仅缩放当前视图
+      option.dataZoom = [
+        { type: 'inside', xAxisIndex: 0, filterMode: 'none' },
+        {
+          type: 'slider',
+          xAxisIndex: 0,
+          height: 16,
+          bottom: 4,
+          borderColor: 'transparent',
+          fillerColor: 'rgba(41,98,255,0.12)',
+          handleSize: '120%',
+          brushSelect: false,
+          textStyle: { color: this.themeVars.axisLabelColor, fontSize: 10 },
+        },
+      ];
+      // 为滑块预留底部空间
+      const grid = option.grid || this.containerSize.grid;
+      const base = typeof grid.bottom === 'number' ? grid.bottom : 10;
+      option.grid = { ...grid, bottom: base + 22 };
     }
     return option;
   }
