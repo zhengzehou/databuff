@@ -153,7 +153,7 @@
       </div>
     </div>
 
-    <!-- 接口趋势下钻 -->
+    <!-- 接口趋势下钻：默认展示第一接口，点击列表切换 -->
     <el-dialog
       :title="`${drillService} · 接口趋势（Top ${drillLimit}）`"
       :visible.sync="drillVisible"
@@ -161,18 +161,27 @@
       append-to-body>
       <div v-loading="drillLoading" class="drill-cont">
         <basic-chart
-          :source="drillSource"
-          :showEmpty="!drillLoading && !drillSource.length"
+          :source="drillActiveSource"
+          :showEmpty="!drillLoading && !drillActiveSource.length"
           :showAxisLabelCount="6"
           :showLegend="true"
           :tooltipEnterable="true"
           :brushMode="false"
           style="height: 320px" />
-        <el-table :data="drillRows" size="small" class="mt-12" max-height="220">
-          <el-table-column label="接口" prop="name" min-width="220" show-overflow-tooltip></el-table-column>
+        <el-table :data="drillRows" size="small" class="mt-12" max-height="220"
+          highlight-current-row
+          :row-class-name="drillRowClass"
+          @row-click="onSelectDrillRow">
+          <el-table-column label="接口" prop="name" min-width="220" show-overflow-tooltip>
+            <template slot-scope="{ row }">
+              <span :class="{ 'blue': row.name === drillActive }">{{ row.name }}</span>
+              <span v-if="row.name === drillActive" class="ml-6" style="color:#2962ff;">●</span>
+            </template>
+          </el-table-column>
           <el-table-column label="今日" prop="today" align="right"></el-table-column>
           <el-table-column label="昨日" prop="yesterday" align="right"></el-table-column>
         </el-table>
+        <div v-if="drillRows.length > 1" class="mt-8" style="font-size:12px;color:var(--color-text-secondary);">点击列表切换接口趋势，默认展示第 1 个</div>
       </div>
     </el-dialog>
 
@@ -245,6 +254,9 @@ export default class MonitorTab extends Vue {
   private drillSource: any[] = [];
   private drillRows: Array<{ name: string; today: number; yesterday: number }> = [];
   private drillLimit = 6;
+  // 接口趋势弹窗：默认仅展示第一接口，点击列表切换
+  private drillEndpoints: Array<{ name: string; today: number; yesterday: number; todaySeries: any[]; yesterdaySeries: any[] }> = [];
+  private drillActive: string = '';
 
   private kpiDrillVisible = false;
   private kpiDrillLoading = false;
@@ -611,31 +623,61 @@ export default class MonitorTab extends Vue {
     return { metric, aggs: aggs || 'sum', groupBy: 'resource' };
   }
 
+  private get drillActiveSource () {
+    if (!this.drillActive || !this.drillEndpoints.length) return [];
+    const hit = this.drillEndpoints.find(r => r.name === this.drillActive) || this.drillEndpoints[0];
+    if (!hit) return [];
+    return [
+      { name: `${hit.name} 今日`, unit: '', color: '#2962ff', data: toSeriesPoints(hit.todaySeries) },
+      { name: `${hit.name} 昨日`, unit: '', color: '#2962ff', lineType: 'dashed', data: toSeriesPoints(hit.yesterdaySeries) },
+    ];
+  }
+
+  private updateDrillChart () {
+    this.drillSource = this.drillActiveSource;
+  }
+
+  private drillRowClass ({ row }: any) {
+    return row.name === this.drillActive ? 'current-row' : '';
+  }
+
+  private onSelectDrillRow (row: any) {
+    if (!row || row.name === this.drillActive) return;
+    this.drillActive = row.name;
+    this.updateDrillChart();
+  }
+
   private async openDrill (row: any, cfgOverride?: any) {
     this.drillService = row.service;
     this.drillVisible = true;
     this.drillLoading = true;
-    const cfg = cfgOverride || this.rankMetricMap[this.rankingMetric as keyof typeof this.rankMetricMap];
+    this.drillActive = '';
+    this.drillEndpoints = [];
+    this.drillSource = [];
+    this.drillRows = [];
+    const cfg = cfgOverride && cfgOverride.metric ? cfgOverride : this.rankMetricMap[this.rankingMetric as keyof typeof this.rankMetricMap];
     const drill = this.resolveDrillMetric(cfg.metric, cfg.aggs);
     try {
       const window = this.trendWindow;
       if (!window) {
-        this.drillSource = [];
-        this.drillRows = [];
         return;
       }
-      const {metric,aggs} = this.resolveDrillMetric(this.rankingMetric,drill.aggs)
-      const rows = await fetchServiceEndpoints(window, row.service,metric, aggs, drill.groupBy, this.drillLimit);
+      const rows = await fetchServiceEndpoints(window, row.service, drill.metric, drill.aggs, drill.groupBy, this.drillLimit);
+      this.drillEndpoints = rows.map((r: any) => ({
+        name: r.name,
+        today: r.today,
+        yesterday: r.yesterday,
+        todaySeries: r.todaySeries,
+        yesterdaySeries: r.yesterdaySeries,
+      }));
       this.drillRows = rows.map((r) => ({
         name: r.name,
         today: this.formatValue(r.today),
         yesterday: this.formatValue(r.yesterday),
       }));
-      // 今日实线、昨日同色虚线（时间轴已在服务端对齐）
-      this.drillSource = rows.flatMap((r) => [
-        { name: `${r.name} 今日`, unit: '', color: '#2962ff', data: toSeriesPoints(r.todaySeries) },
-        { name: `${r.name} 昨日`, unit: '', color: '#2962ff', lineType: 'dashed', data: toSeriesPoints(r.yesterdaySeries) },
-      ]);
+      // 默认展示排在第一的接口
+      this.drillActive = rows[0]?.name || '';
+      this.updateDrillChart();
     } finally {
       this.drillLoading = false;
     }
@@ -920,5 +962,8 @@ export default class MonitorTab extends Vue {
 
 .drill-cont {
   min-height: 320px;
+}
+:deep(.current-row) {
+  background-color: rgba(41, 98, 255, 0.06) !important;
 }
 </style>
