@@ -198,11 +198,161 @@ public class CockpitPortalService {
         if (!"SERVICE".equalsIgnoreCase(type)) {
             return emptyEntityAlarmList();
         }
+        // 若传入分页参数，则对服务信息块分页（默认 100/页），保持 summary 统计为全量
+        if (hasPageParam(body)) {
+            return getEntityAlarmPaginated(body, from, to);
+        }
         long duration = Math.max(0L, to - from);
         long previousFrom = from - duration;
         EntityAlarmSummary current = summarizeServiceEntityAlarms(body, from, to);
         EntityAlarmSummary previous = summarizeServiceEntityAlarms(body, previousFrom, from);
         return toEntityAlarmResponse(current, previous);
+    }
+
+    /**
+     * 按数据块拆分 - 摘要块：仅返回统计计数与环比，不含 alarmEntityList。
+     * 用于首屏快速渲染，避免一次性返回全量服务列表。
+     */
+    public Map<String, Object> getEntityAlarmSummary(Map<String, Object> body) {
+        String type = ServicePortalService.stringValue(body.get("type"), "SERVICE");
+        long now = System.currentTimeMillis();
+        long from = PortalTimeParser.rangeFrom(body, now - 3_600_000L);
+        long to = PortalTimeParser.rangeTo(body, now);
+        if (!"SERVICE".equalsIgnoreCase(type)) {
+            return emptyEntityAlarmSummary();
+        }
+        long duration = Math.max(0L, to - from);
+        long previousFrom = from - duration;
+        EntityAlarmSummary current = summarizeServiceEntityAlarms(body, from, to);
+        EntityAlarmSummary previous = summarizeServiceEntityAlarms(body, previousFrom, from);
+        return toEntityAlarmSummaryResponse(current, previous);
+    }
+
+    /**
+     * 按数据块拆分 - 服务信息块：分页返回 alarmEntityList，默认 100/页。
+     * 入参支持 page/pageNum + pageSize/size/offset 组合。
+     */
+    public Map<String, Object> getEntityAlarmPage(Map<String, Object> body) {
+        String type = ServicePortalService.stringValue(body.get("type"), "SERVICE");
+        long now = System.currentTimeMillis();
+        long from = PortalTimeParser.rangeFrom(body, now - 3_600_000L);
+        long to = PortalTimeParser.rangeTo(body, now);
+        if (!"SERVICE".equalsIgnoreCase(type)) {
+            Map<String, Object> empty = new LinkedHashMap<>();
+            empty.put("total", 0);
+            empty.put("page", 1);
+            empty.put("pageSize", resolvePageSize(body));
+            empty.put("list", List.of());
+            empty.put("alarmEntityList", List.of());
+            return empty;
+        }
+        return buildEntityAlarmPage(body, from, to);
+    }
+
+    private Map<String, Object> getEntityAlarmPaginated(Map<String, Object> body, long from, long to) {
+        long duration = Math.max(0L, to - from);
+        long previousFrom = from - duration;
+        EntityAlarmSummary current = summarizeServiceEntityAlarms(body, from, to);
+        EntityAlarmSummary previous = summarizeServiceEntityAlarms(body, previousFrom, from);
+        Map<String, Object> data = toEntityAlarmResponse(current, previous);
+        // 对 alarmEntityList 分页
+        List<Map<String, Object>> fullList = current.alarmEntityList();
+        int total = fullList.size();
+        int page = resolvePage(body);
+        int pageSize = resolvePageSize(body);
+        int offset = (page - 1) * pageSize;
+        List<Map<String, Object>> pageList = sliceList(fullList, offset, pageSize);
+        data.put("alarmEntityList", pageList);
+        data.put("page", page);
+        data.put("pageSize", pageSize);
+        data.put("offset", offset);
+        return data;
+    }
+
+    private Map<String, Object> buildEntityAlarmPage(Map<String, Object> body, long from, long to) {
+        EntityAlarmSummary current = summarizeServiceEntityAlarms(body, from, to);
+        List<Map<String, Object>> fullList = current.alarmEntityList();
+        int total = fullList.size();
+        int page = resolvePage(body);
+        int pageSize = resolvePageSize(body);
+        int offset = (page - 1) * pageSize;
+        List<Map<String, Object>> pageList = sliceList(fullList, offset, pageSize);
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("total", total);
+        data.put("page", page);
+        data.put("pageSize", pageSize);
+        data.put("offset", offset);
+        data.put("size", pageList.size());
+        data.put("list", pageList);
+        data.put("alarmEntityList", pageList);
+        return data;
+    }
+
+    private static boolean hasPageParam(Map<String, Object> body) {
+        return body.containsKey("page") || body.containsKey("pageNum") || body.containsKey("pageSize") || body.containsKey("size");
+    }
+
+    private static int resolvePage(Map<String, Object> body) {
+        int page = ServicePortalService.intValue(body.get("page"), 0);
+        if (page <= 0) {
+            page = ServicePortalService.intValue(body.get("pageNum"), 1);
+        }
+        return Math.max(1, page);
+    }
+
+    private static int resolvePageSize(Map<String, Object> body) {
+        int size = ServicePortalService.intValue(body.get("pageSize"), 0);
+        if (size <= 0) {
+            size = ServicePortalService.intValue(body.get("size"), 0);
+        }
+        if (size <= 0) {
+            Object offsetObj = body.get("offset");
+            // 若仅传 offset/size 组合，size 仍为 100
+            size = 100;
+            if (offsetObj != null) {
+                // 保持兼容，不改变 page 推导
+            }
+        }
+        // 按需求默认 100/页，限制 1-500
+        return Math.max(1, Math.min(size, 500));
+    }
+
+    private static List<Map<String, Object>> sliceList(List<Map<String, Object>> list, int offset, int pageSize) {
+        if (list == null || list.isEmpty() || offset >= list.size()) {
+            return List.of();
+        }
+        int end = Math.min(offset + pageSize, list.size());
+        return new ArrayList<>(list.subList(offset, end));
+    }
+
+    private static Map<String, Object> emptyEntityAlarmSummary() {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("total", 0);
+        data.put("matterDataCount", 0);
+        data.put("minorDataCount", 0);
+        data.put("noDataCount", 0);
+        data.put("noAlarmCount", 0);
+        data.put("matterDataCountRate", 0);
+        data.put("minorDataCountRate", 0);
+        data.put("noDataCountRate", 0);
+        data.put("noAlarmCountRate", 0);
+        return data;
+    }
+
+    private static Map<String, Object> toEntityAlarmSummaryResponse(
+            EntityAlarmSummary current,
+            EntityAlarmSummary previous) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("total", current.total());
+        data.put("matterDataCount", current.matterCount());
+        data.put("minorDataCount", current.minorCount());
+        data.put("noDataCount", current.noDataCount());
+        data.put("noAlarmCount", current.noAlarmCount());
+        data.put("matterDataCountRate", changeRate(current.matterCount(), previous.matterCount()));
+        data.put("minorDataCountRate", changeRate(current.minorCount(), previous.minorCount()));
+        data.put("noDataCountRate", changeRate(current.noDataCount(), previous.noDataCount()));
+        data.put("noAlarmCountRate", changeRate(current.noAlarmCount(), previous.noAlarmCount()));
+        return data;
     }
 
     public List<Map<String, Object>> getAlarmCount(Map<String, Object> body) {

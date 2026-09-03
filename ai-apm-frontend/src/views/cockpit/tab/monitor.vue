@@ -595,13 +595,20 @@ export default class MonitorTab extends Vue {
   private resolveDrillMetric (metric: string, aggs: string) {
     // service / service.exception 等 rollup 表没有 resource(接口) 维度，按 resource 分组会无数据。
     // 接口(端点)级数据在带 resource/url 维度的 measurement 上（如 service.http），这里做映射。
+    // 兼容排行别名 req/err/exc
     const map: Record<string, { metric: string; aggs: string; groupBy: string }> = {
       'service.cnt': { metric: 'service.http.cnt', aggs: 'sum', groupBy: 'resource' },
+      'req': { metric: 'service.http.cnt', aggs: 'sum', groupBy: 'resource' },
       'service.error': { metric: 'service.http.error', aggs: 'avg', groupBy: 'resource' },
+      'err': { metric: 'service.http.error', aggs: 'avg', groupBy: 'resource' },
       'service.slowCnt': { metric: 'service.http.slowCnt', aggs: 'sum', groupBy: 'resource' },
+      'service.exception.cnt': { metric: 'service.exception.cnt', aggs: 'sum', groupBy: 'resource' },
+      'exc': { metric: 'service.exception.cnt', aggs: 'sum', groupBy: 'resource' },
     };
-    // 其余（如 service.exception.cnt）保持原指标，按 resource 分组即可
-    return map[metric] || { metric, aggs, groupBy: 'resource' };
+    const hit = map[metric];
+    if (hit) return hit;
+    // 兜底：未知别名按 resource 分组，aggs 为空时默认 sum
+    return { metric, aggs: aggs || 'sum', groupBy: 'resource' };
   }
 
   private async openDrill (row: any, cfgOverride?: any) {
@@ -617,7 +624,8 @@ export default class MonitorTab extends Vue {
         this.drillRows = [];
         return;
       }
-      const rows = await fetchServiceEndpoints(window, row.service, drill.metric, drill.aggs, drill.groupBy, this.drillLimit);
+      const {metric,aggs} = this.resolveDrillMetric(this.rankingMetric,drill.aggs)
+      const rows = await fetchServiceEndpoints(window, row.service,metric, aggs, drill.groupBy, this.drillLimit);
       this.drillRows = rows.map((r) => ({
         name: r.name,
         today: this.formatValue(r.today),

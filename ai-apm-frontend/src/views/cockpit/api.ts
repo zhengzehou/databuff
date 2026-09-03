@@ -38,4 +38,12 @@ export default {
   getEntityAlarmList (data: any = {}) {
     return http.post('/cockpit/alarm/getEntityAlarmList', data)
   },
+  /** 按数据块拆分 - 摘要块（统计与环比，不含列表） */
+  getEntityAlarmSummary (data: any = {}) {
+    return http.post('/cockpit/alarm/getEntityAlarmSummary', data)
+  },
+  /** 按数据块拆分 - 服务信息块分页（默认 100/页） */
+  getEntityAlarmPage (data: any = {}) {
+    return http.post('/cockpit/alarm/getEntityAlarmPage', data)
+  },
 }

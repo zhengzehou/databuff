@@ -1,6 +1,8 @@
 package com.databuff.apm.web.portal;
 
 import com.databuff.apm.web.metric.MetricQueryService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -17,6 +19,7 @@ import java.util.TreeMap;
  */
 @Service
 public class CockpitMetricPortalService {
+    private static final Logger log = LoggerFactory.getLogger(CockpitMetricPortalService.class);
 
     private final MetricQueryService metricQueryService;
 
@@ -148,15 +151,27 @@ public class CockpitMetricPortalService {
         String aggs = stringValue(body.get("aggs"));
         String groupBy = stringValue(body.get("groupBy"));
         int limit = toInt(body.get("limit"), 6);
+        // 兼容前端排行别名 req/err/exc 及空 aggs
+        metric = resolveEndpointMetricAlias(metric);
+        if (aggs.isEmpty()) {
+            aggs = defaultAggsForMetric(metric);
+        }
+        if (groupBy.isEmpty()) {
+            groupBy = "resource";
+        }
+        log.info("serviceEndpoints request window={} serviceNames={} service={} metric={} aggs={} groupBy={} limit={} body={}", window, serviceNames, service, metric, aggs, groupBy, limit, body);
         if ((service.isEmpty() && serviceNames.isEmpty()) || metric.isEmpty() || groupBy.isEmpty()) {
+            log.warn("serviceEndpoints missing required param, return empty");
             return List.of();
         }
         // serviceNames 非空时优先使用 serviceNames 筛选，否则使用 service
         String effectiveService = service.isEmpty() ? serviceNames.get(0) : service;
-        List<Map<String, Object>> todaySeries = metricChart(metric, aggs, serviceNames, groupBy, effectiveService, window.startSec(), window.endSec(), window.interval());
+        List<Map<String, Object>> todaySeries = metricChart(metric, aggs, serviceNames, groupBy, effectiveService, window.startSec(), window.endSec(), window.interval(), limit);
+        log.info("serviceEndpoints todaySeries size={} for service={} metric={}", todaySeries.size(), effectiveService, metric);
         long yStart = window.startSec() - window.durationSec();
         long yEnd = window.endSec() - window.durationSec();
-        List<Map<String, Object>> yesterdaySeries = metricChart(metric, aggs, serviceNames, groupBy, effectiveService, yStart, yEnd, window.interval());
+        List<Map<String, Object>> yesterdaySeries = metricChart(metric, aggs, serviceNames, groupBy, effectiveService, yStart, yEnd, window.interval(), limit);
+        log.info("serviceEndpoints yesterdaySeries size={} for service={} metric={}", yesterdaySeries.size(), effectiveService, metric);
         long shiftMillis = window.durationSec() * 1000L;
 
         Map<String, List<TrendPoint>> todayMap = new LinkedHashMap<>();
@@ -226,6 +241,13 @@ public class CockpitMetricPortalService {
             String metric, String aggs, List<String> serviceNames,
             String groupBy, String serviceName,
             long startSec, long endSec, int interval) {
+        return metricChart(metric, aggs, serviceNames, groupBy, serviceName, startSec, endSec, interval, TOP_GROUP_LIMIT);
+    }
+
+    private List<Map<String, Object>> metricChart(
+            String metric, String aggs, List<String> serviceNames,
+            String groupBy, String serviceName,
+            long startSec, long endSec, int interval, int limit) {
         if (metric.isEmpty()) {
             return List.of();
         }
@@ -251,14 +273,17 @@ public class CockpitMetricPortalService {
         queryA.put("aggs", aggs);
         if (!by.isEmpty()) {
             queryA.put("by", by);
-            queryA.put("order", Map.of("limit", TOP_GROUP_LIMIT));
+            queryA.put("order", Map.of("limit", Math.max(1, Math.min(limit, TOP_GROUP_LIMIT))));
         }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("start", startSec);
         body.put("end", endSec);
         body.put("interval", interval);
         body.put("query", Map.of("A", queryA));
-        return metricQueryService.metricChart(body);
+        log.info("metricChart query metric={} aggs={} serviceNames={} groupBy={} serviceName={} limit={} body={}", metric, aggs, serviceNames, groupBy, serviceName, limit, body);
+        List<Map<String, Object>> result = metricQueryService.metricChart(body);
+        log.info("metricChart result metric={} size={}", metric, result.size());
+        return result;
     }
 
     private double aggregatePoints(List<TrendPoint> points, String aggs) {
@@ -359,6 +384,21 @@ public class CockpitMetricPortalService {
             }
         }
         return result;
+    }
+
+    private static String resolveEndpointMetricAlias(String metric) {
+        if (metric == null) return "";
+        return switch (metric) {
+            case "req" -> "service.http.cnt";
+            case "err" -> "service.http.error";
+            case "exc" -> "service.exception.cnt";
+            default -> metric;
+        };
+    }
+
+    private static String defaultAggsForMetric(String metric) {
+        if ("service.http.error".equals(metric) || "service.error".equals(metric)) return "avg";
+        return "sum";
     }
 
     private static String stringValue(Object value) {

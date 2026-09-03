@@ -53,6 +53,23 @@ public class CockpitPortalController {
         return portalEnvelope(cockpitPortalService.getEntityAlarmList(body));
     }
 
+    /**
+     * 按数据块拆分 - 摘要块：统计计数与环比（不含列表），首屏快速返回
+     */
+    @PostMapping("/alarm/getEntityAlarmSummary")
+    public Map<String, Object> getEntityAlarmSummary(@RequestBody Map<String, Object> body) {
+        return portalEnvelope(cockpitPortalService.getEntityAlarmSummary(body));
+    }
+
+    /**
+     * 按数据块拆分 - 服务信息块：分页查询报警实体列表，默认 100/页
+     * 支持 page/pageNum/pageSize/size/offset 参数
+     */
+    @PostMapping("/alarm/getEntityAlarmPage")
+    public Map<String, Object> getEntityAlarmPage(@RequestBody Map<String, Object> body) {
+        return portalEnvelope(cockpitPortalService.getEntityAlarmPage(body));
+    }
+
     @GetMapping("/getConfig")
     public Map<String, Object> getConfig(@RequestParam(required = false) String type) {
         return portalEnvelope(buildHealthConfigView(type));

@@ -47,6 +47,7 @@
         :timeStr="getTimeRangeStr"
         @click="handleClick"
         class="mb-20" />
+      <div v-if="group.loading && group.list.length === 0" class="pb-20 tc describe">加载中...</div>
     </div>
   </div>
 </template>
@@ -87,22 +88,6 @@ export default class AlarmComp extends Vue {
   private loading: boolean = false
 
   private groupList: any[] = [
-    // {
-    //   name: i18n.t('modules.views.cockpit.tab.s_5d83cfa4') as string, nameKey: 'modules.views.cockpit.tab.s_5d83cfa4',
-    //   type: '',
-    //   totalName: i18n.t('modules.views.cockpit.tab.s_9345f9db') as string,
-    //   total: 0,
-    //   important: 0,
-    //   importantRate: 0,
-    //   secondary: 0,
-    //   secondaryRate: 0,
-    //   nodata: 0,
-    //   nodataRate: 0,
-    //   noalarm: 0,
-    //   noalarmRate: 0,
-    //   list: [],
-    //   loading: false,
-    // },
     {
       name: i18n.t('modules.views.alarmCenter.alarm.s_47d68cd0') as string, nameKey: 'modules.views.alarmCenter.alarm.s_47d68cd0',
       type: 'SERVICE',
@@ -119,22 +104,6 @@ export default class AlarmComp extends Vue {
       list: [],
       loading: false,
     },
-    // {
-    //   name: i18n.t('modules.views.cockpit.tab.s_6aa2fa41') as string, nameKey: 'modules.views.cockpit.tab.s_6aa2fa41',
-    //   type: '',
-    //   totalName: i18n.t('modules.views.cockpit.tab.s_dff7c311') as string,
-    //   total: 0,
-    //   important: 0,
-    //   importantRate: 0,
-    //   secondary: 0,
-    //   secondaryRate: 0,
-    //   nodata: 0,
-    //   nodataRate: 0,
-    //   noalarm: 0,
-    //   noalarmRate: 0,
-    //   list: [],
-    //   loading: false,
-    // },
   ]
 
   private levelMap: any = {
@@ -195,17 +164,27 @@ export default class AlarmComp extends Vue {
   }
 
   private async getData () {
-    this.groupList.forEach(async (group) => {
-      const params = {
-        ...this.queryParams,
-        type: group.type,
-      }
-      group.loading = true;
-      const { error, result } = await toAsyncWait(Api.getEntityAlarmList(params));
-      group.loading = false;
-      if (!error) {
-        const data = result?.data || {};
+    this.groupList.forEach((group) => {
+      this.loadGroupData(group);
+    });
+  }
+
+  /** 按数据块拆分：摘要与列表独立，列表按 100/页增量渲染（查一页渲一页，直至取完，全部接口完成即渲） */
+  private async loadGroupData (group: any) {
+    const baseParams = {
+      ...this.queryParams,
+      type: group.type,
+    };
+    group.loading = true;
+    group.list = [];
+    const pageSize = 100;
+    let total = 0;
+    // 摘要块：完成即渲染统计，不阻塞列表
+    toAsyncWait(Api.getEntityAlarmSummary(baseParams)).then(res => {
+      if (!res.error) {
+        const data = res.result?.data || {};
         group.total = data.total || 0;
+        total = group.total;
         group.important = data.matterDataCount || 0;
         group.secondary = data.minorDataCount || 0;
         group.nodata = data.noDataCount || 0;
@@ -214,30 +193,65 @@ export default class AlarmComp extends Vue {
         group.secondaryRate = +data.minorDataCountRate / 100;
         group.nodataRate = +data.noDataCountRate / 100;
         group.noalarmRate = +data.noAlarmCountRate / 100;
-        group.list = (data.alarmEntityList || []).map((item: any) => {
-          let typeIcon = ''
-          if (params.type === 'BUSINESS') {
-            typeIcon = item.type === 1 ? 'bs' : item.type === 2 ? 'subbs' : ''
-          } else if (params.type === 'SERVICE') {
-            const { service_type, type, language } = (this.getBasicServiceMap || {})[item?.entityId] || {}
-            typeIcon = type || language || service_type || 'default'
-          }
-          const matter = item.matterDataCount || 0
-          const minor = item.minorDataCount || 0
-          const noData = item.noDataCount || 0
-          return {
-            group: group.type,
-            name: item.entityName,
-            id: item.entityId,
-            type: typeIcon,
-            level: matter > 0 ? 3 : minor > 0 ? 2 : noData > 0 ? 1 : 0,
-            3: matter,
-            2: minor,
-            1: noData,
-          }
-        });
       }
-    })
+    });
+    const fetchPage = async (p: number) => {
+      const { error, result } = await toAsyncWait(Api.getEntityAlarmPage({ ...baseParams, page: p, pageSize }));
+      if (error) return { rawList: [] as any[], ptotal: total };
+      const pdata = result?.data || {};
+      const rawList = pdata.list || pdata.alarmEntityList || [];
+      if (pdata.total != null) {
+        total = pdata.total;
+        group.total = total;
+      }
+      return { rawList, ptotal: total };
+    };
+    // 服务列表：第一页到达即渲染并取消 loading，后续页后台增量追加
+    const first = await fetchPage(1);
+    if (first.rawList.length > 0) {
+      group.list = this.mapAlarmEntityList(first.rawList, group.type);
+    } else {
+      group.list = [];
+    }
+    // 第一页已渲染，立即取消 loading（页面所有接口完成即渲，剩余页后台追加不阻塞）
+    group.loading = false;
+    total = group.total || first.ptotal || 0;
+    if (group.list.length >= total || first.rawList.length < pageSize || total === 0) return;
+    let page = 2;
+    while (group.list.length < total) {
+      const { rawList } = await fetchPage(page);
+      if (rawList.length === 0) break;
+      const mapped = this.mapAlarmEntityList(rawList, group.type);
+      group.list = [...group.list, ...mapped];
+      if (rawList.length < pageSize) break;
+      page += 1;
+      if (page > 1000) break;
+    }
+  }
+
+  private mapAlarmEntityList (alarmEntityList: any[], type: string) {
+    return (alarmEntityList || []).map((item: any) => {
+      let typeIcon = '';
+      if (type === 'BUSINESS') {
+        typeIcon = item.type === 1 ? 'bs' : item.type === 2 ? 'subbs' : '';
+      } else if (type === 'SERVICE') {
+        const { service_type, type, language } = (this.getBasicServiceMap || {})[item?.entityId] || {};
+        typeIcon = type || language || service_type || 'default';
+      }
+      const matter = item.matterDataCount || 0;
+      const minor = item.minorDataCount || 0;
+      const noData = item.noDataCount || 0;
+      return {
+        group: type,
+        name: item.entityName,
+        id: item.entityId,
+        type: typeIcon,
+        level: matter > 0 ? 3 : minor > 0 ? 2 : noData > 0 ? 1 : 0,
+        3: matter,
+        2: minor,
+        1: noData,
+      };
+    });
   }
 
   // private handleGroupClick (type: string) {

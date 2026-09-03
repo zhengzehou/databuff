@@ -13,6 +13,8 @@ import com.databuff.apm.common.storage.ApmReadRepository;
 import com.databuff.apm.common.storage.MetricIdentifierParser;
 import com.databuff.apm.common.storage.MetricQueryBuilder;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -26,6 +28,7 @@ import java.util.Set;
 
 @Service
 public class MetricQueryService {
+    private static final Logger log = LoggerFactory.getLogger(MetricQueryService.class);
 
     private final ApmReadRepository readRepository;
     private final String metricDatabase;
@@ -160,7 +163,7 @@ public class MetricQueryService {
             String aggs = stringValue(metricQuery.get("aggs"));
 
             MetricIdentifierParser.ParsedMetric parsed = MetricIdentifierParser.parse(metric);
-            if ("service.exception".equals(parsed.measurement())) {
+            if ("service.exception".equals(parsed.measurement()) && by.isEmpty()) {
                 return List.of(buildChartSeries(
                         serviceErrorSeries(new MetricSeriesRequest(metric, start, end, filters)),
                         Map.of(),
@@ -179,7 +182,23 @@ public class MetricQueryService {
                 String topSql = MetricQueryBuilder.metricTopGroupsSql(
                         metricDatabase, table, fieldColumn, groupColumn,
                         toMillis(start), toMillis(end), filterClause, topLimit, aggs);
+                log.info("metricChart group topSql metric={} groupBy={} groupColumn={} table={} filter={} interval={} aggs={} sql={}", metric, groupBy, groupColumn, table, filterClause, interval, aggs, topSql);
                 List<String> groups = readRepository.queryTopGroups(topSql);
+                log.info("metricChart group result metric={} groupBy={} groupsSize={} groups={}", metric, groupBy, groups.size(), groups.size() > 10 ? groups.subList(0, 10) : groups);
+                // Fallback: 若按 resource 无数据且为 service.http，尝试按 url
+                if (groups.isEmpty() && "service.http".equals(parsed.measurement()) && "resource".equals(groupBy)) {
+                    String fallbackColumn = "url";
+                    String fallbackSql = MetricQueryBuilder.metricTopGroupsSql(
+                            metricDatabase, table, fieldColumn, fallbackColumn,
+                            toMillis(start), toMillis(end), filterClause, topLimit, aggs);
+                    log.warn("metricChart groups empty for resource, fallback to url metric={} sql={}", metric, fallbackSql);
+                    List<String> fallbackGroups = readRepository.queryTopGroups(fallbackSql);
+                    if (!fallbackGroups.isEmpty()) {
+                        log.info("metricChart fallback groupsSize={} groups={}", fallbackGroups.size(), fallbackGroups);
+                        groups = fallbackGroups;
+                        groupColumn = fallbackColumn;
+                    }
+                }
                 List<Map<String, Object>> series = new ArrayList<>();
                 for (String groupValue : groups) {
                     String sql = MetricQueryBuilder.metricFieldSeriesByGroupSql(
@@ -193,14 +212,19 @@ public class MetricQueryService {
                             end,
                             interval));
                 }
+                log.info("metricChart series return metric={} count={} ", metric, series.size());
                 return series;
             }
 
             String sql = MetricQueryBuilder.metricFieldSeriesSql(
                     metricDatabase, table, fieldColumn, toMillis(start), toMillis(end), filterClause, interval, aggs);
+            log.info("metricChart single series metric={} table={} fieldColumn={} aggs={} sql={}", metric, table, fieldColumn, aggs, sql);
+            List<MetricSeriesPoint> points = readRepository.queryMetricSeries(sql);
+            log.info("metricChart single series points size={} metric={}", points.size(), metric);
             return List.of(buildChartSeries(
-                    readRepository.queryMetricSeries(sql), Map.of(), metric, start, end, interval));
+                    points, Map.of(), metric, start, end, interval));
         } catch (Exception e) {
+            log.error("metricChart error metric={} by={} filter={}", body.get("query"), e.getMessage(), e);
             return List.of();
         }
     }

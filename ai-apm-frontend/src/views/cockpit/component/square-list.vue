@@ -11,6 +11,7 @@
         }"
         @click="$emit('click', item)"
         class="square-item db-icon">
+        <span v-if="item.level > 0 && item[item.level] > 0" class="square-badge">{{ item[item.level] }}</span>
         <template v-if="item.type">{{ item.type | DbIconFilter }}</template>
       </div>
       <div slot="content" class="mw-200 p-6">
@@ -107,10 +108,28 @@ export default class SquareList extends Vue {
     cursor: pointer;
     transition: all 0.2s;
     background-color: var(--inactive);
+    position: relative;
 
     &:hover {
       background-color: var(--active);
     }
+  }
+
+  .square-badge {
+    position: absolute;
+    left: 4px;
+    top: 2px;
+    min-width: 16px;
+    height: 14px;
+    line-height: 14px;
+    padding: 0 3px;
+    font-size: 10px;
+    font-weight: 600;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.45);
+    border-radius: 2px;
+    text-align: center;
+    pointer-events: none;
   }
 }
 </style>
