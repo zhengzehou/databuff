@@ -3,6 +3,7 @@ package com.databuff.apm.ingest.config;
 import com.databuff.apm.ingest.nginx.IpServiceResolver;
 import com.databuff.apm.ingest.nginx.NginxIngestService;
 import com.databuff.apm.ingest.nginx.NginxKafkaReceiver;
+import com.databuff.apm.ingest.nginx.NginxNoiseFilter;
 import com.databuff.apm.ingest.nginx.NginxOtlpConverter;
 import com.databuff.apm.ingest.otel.OtlpIngestService;
 import org.springframework.beans.factory.annotation.Value;
@@ -21,12 +22,25 @@ public class NginxReceiverConfiguration {
         return new IpServiceResolver(ipServiceUrl, nameField);
     }
 
+    /**
+     * 噪音流量过滤器：内置规则 + 动态配置（cockpit 配置表键 nginxNoiseHosts / nginxNoiseUris，
+     * 定时刷新免重启）。配置在 web 端配置抽屉或 POST /cockpit/setConfig 维护。
+     */
+    @Bean
+    @Conditional(NginxKafkaEnabledCondition.class)
+    NginxNoiseFilter nginxNoiseFilter(
+            com.databuff.apm.common.storage.ApmReadRepository ingestApmReadRepository,
+            @Value("${ingest.doris.metric-database") String configDatabase) {
+        return new NginxNoiseFilter(ingestApmReadRepository, configDatabase);
+    }
+
     @Bean
     @Conditional(NginxKafkaEnabledCondition.class)
     NginxOtlpConverter nginxOtlpConverter(
             @Value("${ingest.nginx-kafka.request-time-unit:milliseconds}") String requestTimeUnit,
-            IpServiceResolver ipServiceResolver) {
-        return new NginxOtlpConverter(requestTimeUnit, ipServiceResolver);
+            IpServiceResolver ipServiceResolver,
+            NginxNoiseFilter noiseFilter) {
+        return new NginxOtlpConverter(requestTimeUnit, ipServiceResolver, noiseFilter);
     }
 
     @Bean

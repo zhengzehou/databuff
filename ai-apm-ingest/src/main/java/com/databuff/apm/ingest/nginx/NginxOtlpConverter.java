@@ -54,20 +54,24 @@ public final class NginxOtlpConverter {
     private static final SecureRandom RNG = new SecureRandom();
     private static final char[] HEX = "0123456789abcdef".toCharArray();
 
-    /** Hosts whose traffic is excluded from ingestion (infrastructure / virtual hosts). */
-    private static final Set<String> EXCLUDED_HOSTS =
-            Set.of("i0.ule.com", "i1.ule.com", "track.ule.com");
+    /** 噪音流量过滤（内置规则 + 动态配置，见 {@link NginxNoiseFilter}）。 */
+    private final NginxNoiseFilter noiseFilter;
 
     private final String requestTimeUnit;
     private final IpServiceResolver ipServiceResolver;
 
     public NginxOtlpConverter(String requestTimeUnit) {
-        this(requestTimeUnit, new IpServiceResolver(null, null));
+        this(requestTimeUnit, new IpServiceResolver(null, null), new NginxNoiseFilter(null, null));
     }
 
     public NginxOtlpConverter(String requestTimeUnit, IpServiceResolver ipServiceResolver) {
+        this(requestTimeUnit, ipServiceResolver, new NginxNoiseFilter(null, null));
+    }
+
+    public NginxOtlpConverter(String requestTimeUnit, IpServiceResolver ipServiceResolver, NginxNoiseFilter noiseFilter) {
         this.requestTimeUnit = requestTimeUnit == null ? "milliseconds" : requestTimeUnit;
         this.ipServiceResolver = ipServiceResolver != null ? ipServiceResolver : new IpServiceResolver(null, null);
+        this.noiseFilter = noiseFilter != null ? noiseFilter : new NginxNoiseFilter(null, null);
     }
 
     /** Result of converting one nginx log line into the three OTLP requests. */
@@ -86,22 +90,11 @@ public final class NginxOtlpConverter {
             JsonNode root = MAPPER.readTree(json);
             JsonNode source = root.has("_source") ? root.get("_source") : root;
             NginxAccessLog accessLog = MAPPER.treeToValue(source, NginxAccessLog.class);
-            if (accessLog == null) {
+            if (accessLog == null || accessLog.fullUri() == null) {
                 return null;
             }
-            if(accessLog.fullUri() == null
-                    || accessLog.uri().startsWith("/purge/")
-                    || accessLog.fullUri().contains("/checkhealth")
-                    || accessLog.fullUri().contains("clock.ule.com/now")
-                    || accessLog.fullUri().contains("sensorsdata.ule.com")
-                    || accessLog.fullUri().contains("ac.ule.com")
-                    || accessLog.fullUri().endsWith(".js")
-                    || accessLog.fullUri().endsWith(".css")
-                    || accessLog.fullUri().endsWith(".png")
-                    || accessLog.fullUri().endsWith(".jpg")
-                    || accessLog.fullUri().endsWith(".gif")
-                    || accessLog.fullUri().contains("wholesale-api.ule.com/app/sysTime")
-            ){
+            // 噪音流量过滤（内置精确名单/URI 前缀后缀 + 动态配置模糊关键词）
+            if (noiseFilter.shouldDrop(accessLog.host(), accessLog.proxyHost(), accessLog.uri(), accessLog.fullUri())) {
                 return null;
             }
             return buildConverted(accessLog);
@@ -112,11 +105,7 @@ public final class NginxOtlpConverter {
     }
 
     private Converted buildConverted(NginxAccessLog l) {
-        // Skip traffic for infrastructure/virtual hosts that are not application services.
         String host = l.host();
-        if (host != null && EXCLUDED_HOSTS.contains(host.trim().toLowerCase(Locale.ROOT))) {
-            return null;
-        }
 
         // Service identification: prefer proxy_host (upstream group) over host (virtual host);
         // strip the trailing "-group" suffix so the topology target matches the upstream service.

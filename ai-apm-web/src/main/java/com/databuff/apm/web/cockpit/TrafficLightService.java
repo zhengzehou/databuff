@@ -39,6 +39,10 @@ public class TrafficLightService {
     /** 长连接服务列表配置键：统计异常服务数与慢调用数时按此排除（IM/监控轮询等天然长耗时服务）。 */
     public static final String KEY_LONG_CONN_SERVICES = "longConnServices";
 
+    /** nginx 噪音过滤配置键（由 ai-apm-ingest 定时读取，host/URI 模糊匹配），逗号分隔。 */
+    public static final String KEY_NGINX_NOISE_HOSTS = "nginxNoiseHosts";
+    public static final String KEY_NGINX_NOISE_URIS = "nginxNoiseUris";
+
     private final ApmReadRepository readRepository;
     private final String metricDatabase;
     private final Map<String, Object> config = new ConcurrentHashMap<>();
@@ -54,6 +58,8 @@ public class TrafficLightService {
         config.put("exceptionRed", 10);
         config.put("exceptionYellow", 2);
         config.put(KEY_LONG_CONN_SERVICES, List.of());
+        config.put(KEY_NGINX_NOISE_HOSTS, "");
+        config.put(KEY_NGINX_NOISE_URIS, "");
     }
 
     public List<TrafficLightPoint> trafficLight(long fromMillis, long toMillis) {

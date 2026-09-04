@@ -87,7 +87,16 @@ public class TrafficLightConfigPersistence {
             config.put(TrafficLightService.KEY_LONG_CONN_SERVICES,
                     values.get(TrafficLightService.KEY_LONG_CONN_SERVICES));
         }
+        // nginx 噪音过滤关键词（ingest 定时读取），字符串原样透传
+        putStringConfig(config, values, TrafficLightService.KEY_NGINX_NOISE_HOSTS);
+        putStringConfig(config, values, TrafficLightService.KEY_NGINX_NOISE_URIS);
         return config;
+    }
+
+    private static void putStringConfig(Map<String, Object> config, Map<String, String> values, String key) {
+        if (values.containsKey(key)) {
+            config.put(key, values.get(key));
+        }
     }
 
     private static void putDoubleConfig(Map<String, Object> config, Map<String, String> values, String key) {

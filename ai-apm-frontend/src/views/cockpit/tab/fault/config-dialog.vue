@@ -65,6 +65,28 @@
           配置的服务不参与异常服务数与慢调用统计（适用于 IM、监控轮询等天然长耗时服务）
         </div>
       </el-form-item>
+
+      <div class="font-14 lh-22 fw-500 mb-10">nginx 噪音过滤</div>
+      <el-form-item label="Host 关键词" :show-message="false" class="mb-20">
+        <el-input
+          v-model="settingForm.nginxNoiseHosts"
+          type="textarea" :rows="2"
+          placeholder="逗号分隔，模糊匹配，如：track.ule.com,sensors"
+          class="long-conn-input" />
+        <div class="font-12" style="color:var(--color-text-secondary);line-height:18px;">
+          命中的 nginx 接入日志整条丢弃（不产生 trace/指标/日志），60 秒内生效
+        </div>
+      </el-form-item>
+      <el-form-item label="URI 关键词" :show-message="false" class="mb-20">
+        <el-input
+          v-model="settingForm.nginxNoiseUris"
+          type="textarea" :rows="2"
+          placeholder="逗号分隔，模糊匹配，如：/checkhealth,/purge/"
+          class="long-conn-input" />
+        <div class="font-12" style="color:var(--color-text-secondary);line-height:18px;">
+          同上，按 URI 包含匹配
+        </div>
+      </el-form-item>
     </el-form>
 
     <div class="drawer-footer pt-12">
@@ -130,6 +152,8 @@ export default class ConfigDialog extends Vue {
     red: FAULT_HEALTH_DEFAULTS.alarm.red,
     yellow: FAULT_HEALTH_DEFAULTS.alarm.yellow,
     longConnServices: '',
+    nginxNoiseHosts: '',
+    nginxNoiseUris: '',
   }
   get settingRules () {
     return {
@@ -145,6 +169,8 @@ export default class ConfigDialog extends Vue {
     this.settingForm.showServiceNumber = this.config.showServiceNumber ?? FAULT_HEALTH_DEFAULTS.showServiceNumber
     const longConn = this.config.longConnServices
     this.settingForm.longConnServices = Array.isArray(longConn) ? longConn.join(',') : (longConn || '')
+    this.settingForm.nginxNoiseHosts = this.config.nginxNoiseHosts || ''
+    this.settingForm.nginxNoiseUris = this.config.nginxNoiseUris || ''
     if (typeCfg && typeCfg.red != null && typeCfg.yellow != null) {
       this.settingForm.red = typeCfg.red
       this.settingForm.yellow = typeCfg.yellow
@@ -167,6 +193,10 @@ export default class ConfigDialog extends Vue {
         const params = {
           ...this.settingForm,
           longConnServices: (this.settingForm.longConnServices || '')
+            .split(/[,，]/).map((s: string) => s.trim()).filter(Boolean).join(','),
+          nginxNoiseHosts: (this.settingForm.nginxNoiseHosts || '')
+            .split(/[,，]/).map((s: string) => s.trim()).filter(Boolean).join(','),
+          nginxNoiseUris: (this.settingForm.nginxNoiseUris || '')
             .split(/[,，]/).map((s: string) => s.trim()).filter(Boolean).join(','),
           type: this.type,
         }
