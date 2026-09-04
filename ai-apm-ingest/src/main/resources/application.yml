@@ -88,11 +88,11 @@ ingest:
     ip-service-url: ${NGINX_KAFKA_IP_SERVICE_URL:https://opt.uletm.com/apm-statistics/api/search/app}
     ip-service-name-field: ${NGINX_KAFKA_IP_SERVICE_NAME_FIELD:serviceName}
   doris:
-    fe-host: ${DORIS_FE_HOST:127.0.0.1}
+    fe-host: ${DORIS_FE_HOST:172.25.200.167}
     fe-http-port: ${DORIS_FE_HTTP_PORT:8030}
     fe-query-port: ${DORIS_FE_QUERY_PORT:9030}
     # Comma-separated BE HTTP endpoints for direct Stream Load, e.g. be1:8040,be2:8040
-    be-http-host: ${DORIS_BE_HTTP_HOST:127.0.0.1}
+    be-http-host: ${DORIS_BE_HTTP_HOST:172.25.200.167}
     be-http-port: ${DORIS_BE_HTTP_PORT:8040}
     metric-database: databuff
     metric-table: service

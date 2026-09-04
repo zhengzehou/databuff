@@ -55,7 +55,7 @@ apm:
     metric-database: databuff
     trace-database: databuff
     username: ${DORIS_USER:root}
-    password: ${DORIS_PASSWORD:X7$mPq#2Lr&wZ9yE}
+    password: ${DORIS_PASSWORD:}
     availability:
       probe-interval-ms: ${DORIS_AVAILABILITY_PROBE_INTERVAL_MS:60000}
       connect-timeout-ms: ${DORIS_AVAILABILITY_CONNECT_TIMEOUT_MS:3000}
