@@ -169,7 +169,7 @@ public class MetricQueryService {
             String aggs = stringValue(metricQuery.get("aggs"));
 
             MetricIdentifierParser.ParsedMetric parsed = MetricIdentifierParser.parse(metric);
-            if ("service.exception".equals(parsed.measurement()) && by.isEmpty()) {
+            if ("service.exception".equals(parsed.measurement())) {
                 return List.of(buildChartSeries(
                         serviceErrorSeries(new MetricSeriesRequest(metric, start, end, filters)),
                         Map.of(),
@@ -188,62 +188,28 @@ public class MetricQueryService {
                 String topSql = MetricQueryBuilder.metricTopGroupsSql(
                         metricDatabase, table, fieldColumn, groupColumn,
                         toMillis(start), toMillis(end), filterClause, topLimit, aggs);
-                log.info("metricChart group topSql metric={} groupBy={} groupColumn={} table={} filter={} interval={} aggs={} sql={}", metric, groupBy, groupColumn, table, filterClause, interval, aggs, topSql);
                 List<String> groups = readRepository.queryTopGroups(topSql);
-                log.info("metricChart group result metric={} groupBy={} groupsSize={} groups={}", metric, groupBy, groups.size(), groups.size() > 10 ? groups.subList(0, 10) : groups);
-                // Fallback: 若按 resource 无数据且为 service.http，尝试按 url
-                if (groups.isEmpty() && "service.http".equals(parsed.measurement()) && "resource".equals(groupBy)) {
-                    String fallbackColumn = "url";
-                    String fallbackSql = MetricQueryBuilder.metricTopGroupsSql(
-                            metricDatabase, table, fieldColumn, fallbackColumn,
-                            toMillis(start), toMillis(end), filterClause, topLimit, aggs);
-                    log.warn("metricChart groups empty for resource, fallback to url metric={} sql={}", metric, fallbackSql);
-                    List<String> fallbackGroups = readRepository.queryTopGroups(fallbackSql);
-                    if (!fallbackGroups.isEmpty()) {
-                        log.info("metricChart fallback groupsSize={} groups={}", fallbackGroups.size(), fallbackGroups);
-                        groups = fallbackGroups;
-                        groupColumn = fallbackColumn;
-                    }
+                List<Map<String, Object>> series = new ArrayList<>();
+                for (String groupValue : groups) {
+                    String sql = MetricQueryBuilder.metricFieldSeriesByGroupSql(
+                            metricDatabase, table, fieldColumn, groupColumn, groupValue,
+                            toMillis(start), toMillis(end), filterClause, interval, aggs);
+                    series.add(buildChartSeries(
+                            readRepository.queryMetricSeries(sql),
+                            Map.of(groupBy, groupValue),
+                            metric,
+                            start,
+                            end,
+                            interval));
                 }
-                String finalGroupColumn = groupColumn;
-                List<Map<String, Object>> series;
-                try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
-                    List<Future<Map<String, Object>>> futures = executor.invokeAll(
-                            groups.stream()
-                                    .map(groupValue -> (Callable<Map<String, Object>>) () -> {
-                                        String sql = MetricQueryBuilder.metricFieldSeriesByGroupSql(
-                                                metricDatabase, table, fieldColumn, finalGroupColumn, groupValue,
-                                                toMillis(start), toMillis(end), filterClause, interval, aggs);
-                                        return buildChartSeries(
-                                                readRepository.queryMetricSeries(sql),
-                                                Map.of(groupBy, groupValue),
-                                                metric,
-                                                start,
-                                                end,
-                                                interval);
-                                    })
-                                    .collect(Collectors.toList())
-                    );
-                    series = futures.stream()
-                            .map(f -> {
-                                try { return f.get(); }
-                                catch (Exception e) { throw new RuntimeException(e); }
-                            })
-                            .collect(Collectors.toList());
-                }
-                log.info("metricChart series return metric={} count={} ", metric, series.size());
                 return series;
             }
 
             String sql = MetricQueryBuilder.metricFieldSeriesSql(
                     metricDatabase, table, fieldColumn, toMillis(start), toMillis(end), filterClause, interval, aggs);
-            log.info("metricChart single series metric={} table={} fieldColumn={} aggs={} sql={}", metric, table, fieldColumn, aggs, sql);
-            List<MetricSeriesPoint> points = readRepository.queryMetricSeries(sql);
-            log.info("metricChart single series points size={} metric={}", points.size(), metric);
             return List.of(buildChartSeries(
-                    points, Map.of(), metric, start, end, interval));
+                    readRepository.queryMetricSeries(sql), Map.of(), metric, start, end, interval));
         } catch (Exception e) {
-            log.error("metricChart error metric={} by={} filter={}", body.get("query"), e.getMessage(), e);
             return List.of();
         }
     }
@@ -409,6 +375,9 @@ public class MetricQueryService {
     private static String resolveChartGroupColumn(String groupBy, String measurement) {
         if ("exceptionName".equals(groupBy)) {
             return "errorType";
+        }
+        if ("service.http".equals(measurement) && "resource".equals(groupBy)) {
+            return "url";
         }
         return MetricIdentifierParser.toColumnName(groupBy);
     }
