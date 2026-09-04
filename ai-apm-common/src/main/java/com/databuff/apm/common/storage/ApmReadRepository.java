@@ -347,6 +347,40 @@ public class ApmReadRepository implements AutoCloseable {
         return points;
     }
 
+    /** 分组聚合标量（top 分组的窗口总量），列：group_value / metric_total。 */
+    public List<ApmQueryModels.TopGroupTotal> queryTopGroupTotals(String sql) throws SQLException {
+        List<ApmQueryModels.TopGroupTotal> totals = new ArrayList<>();
+        try (Connection connection = connection();
+             Statement statement = connection.createStatement();
+             ResultSet rs = statement.executeQuery(sql)) {
+            while (rs.next()) {
+                String groupValue = rs.getString("group_value");
+                double total = rs.getDouble("metric_total");
+                if (rs.wasNull()) {
+                    total = 0;
+                }
+                totals.add(new ApmQueryModels.TopGroupTotal(groupValue, total));
+            }
+        }
+        return totals;
+    }
+
+    /** 分组 × 时间桶聚合点（单查询替代逐组时序查询），列：group_value / epoch_sec / metric_value。 */
+    public List<ApmQueryModels.GroupBucketPoint> queryGroupBucketSeries(String sql) throws SQLException {
+        List<ApmQueryModels.GroupBucketPoint> points = new ArrayList<>();
+        try (Connection connection = connection();
+             Statement statement = connection.createStatement();
+             ResultSet rs = statement.executeQuery(sql)) {
+            while (rs.next()) {
+                points.add(new ApmQueryModels.GroupBucketPoint(
+                        rs.getString("group_value"),
+                        rs.getLong("epoch_sec"),
+                        rs.getDouble("metric_value")));
+            }
+        }
+        return points;
+    }
+
     public List<ApmQueryModels.TopologyEdge> queryTopologyEdges(String sql) throws SQLException {
         List<ApmQueryModels.TopologyEdge> edges = new ArrayList<>();
         try (Connection connection = connection();

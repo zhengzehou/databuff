@@ -345,6 +345,14 @@ public final class ApmQueryModels {
     public record BucketCountPoint(long ts, long count) {
     }
 
+    /** 分组聚合标量（如按服务分组的窗口总量），groupValue 为分组列值。 */
+    public record TopGroupTotal(String groupValue, double metricTotal) {
+    }
+
+    /** 分组 × 时间桶的聚合点（单查询替代逐组时序查询），epochSeconds 为秒。 */
+    public record GroupBucketPoint(String groupValue, long epochSeconds, double value) {
+    }
+
     public record TopologyEdge(String srcService, String dstService, long callCount, long errorCount) {
     }
 

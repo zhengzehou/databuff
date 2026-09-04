@@ -206,9 +206,9 @@ public final class MetricQueryBuilder {
                     WHERE %s
                     GROUP BY ts_millis, `service`
                 ) t
-                WHERE `total_cnt` < %s
+                WHERE (`total_cnt` < %s
                    OR `total_cnt` <= 0
-                   OR `error_cnt` * 1.0 / NULLIF(`total_cnt`, 0) > %s / 2
+                   OR `error_cnt` * 1.0 / NULLIF(`total_cnt`, 0) > %s / 2)
                    %s
                 GROUP BY ts_millis
                 ORDER BY ts_millis ASC
@@ -4066,6 +4066,52 @@ public final class MetricQueryBuilder {
                 extraFilters == null ? "" : extraFilters,
                 group,
                 Math.max(1, Math.min(limit, 50)));
+    }
+
+    /**
+     * 分组 × 时间桶聚合：单次查询替代"metricTopGroupsSql 取 top 分组 + 逐组 metricFieldSeriesByGroupSql 查时序"的
+     * 1+N 模式。GROUP BY 分组列 + epoch_sec，调用方在 Java 侧按组拆分、补零与截断。
+     * JVM GC 单调计数类字段不支持（返回 null，调用方应回退 metricChart 逐组路径）。
+     */
+    public static String metricGroupBucketSeriesSql(
+            String database,
+            String table,
+            String fieldColumn,
+            String groupColumn,
+            long fromMillis,
+            long toMillis,
+            String extraFilters,
+            int intervalSec,
+            String aggs) {
+        if (isJvmGcMonotonicField(fieldColumn)) {
+            return null;
+        }
+        String derivedExpr = derivedMetricValueExpr(fieldColumn);
+        String valueExpr = derivedExpr != null
+                ? derivedExpr
+                : resolveFieldAggregation(fieldColumn, aggs).formatted(MetricIdentifierParser.toFieldColumnName(fieldColumn));
+        String group = MetricIdentifierParser.toColumnName(groupColumn);
+        int bucketSec = Math.max(60, intervalSec);
+        return """
+                SELECT `%s` AS group_value,
+                       %s AS epoch_sec,
+                       %s AS metric_value
+                FROM %s.`%s`
+                WHERE %s
+                  AND `%s` IS NOT NULL AND `%s` != ''
+                %s
+                GROUP BY group_value, epoch_sec
+                ORDER BY epoch_sec ASC
+                """.formatted(
+                group,
+                metricBucketEpochSecSelect(bucketSec),
+                valueExpr,
+                database,
+                table,
+                metricTsWhere(fromMillis, toMillis),
+                group,
+                group,
+                extraFilters == null ? "" : extraFilters);
     }
 
     private static String derivedMetricTopGroupsSql(

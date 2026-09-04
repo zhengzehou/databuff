@@ -90,6 +90,7 @@ public final class NginxOtlpConverter {
                 return null;
             }
             if(accessLog.fullUri() == null
+                    || accessLog.uri().startsWith("/purge/")
                     || accessLog.fullUri().contains("/checkhealth")
                     || accessLog.fullUri().contains("clock.ule.com/now")
                     || accessLog.fullUri().contains("sensorsdata.ule.com")

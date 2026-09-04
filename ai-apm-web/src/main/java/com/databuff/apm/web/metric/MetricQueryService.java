@@ -252,6 +252,143 @@ public class MetricQueryService {
         }
     }
 
+    /**
+     * 分组聚合标量：直接返回 top 分组的窗口总量（1 次查询）。
+     * 替代 metricChart 分组路径"top 分组 + 逐组时序查询再求和"的 1+N 模式——
+     * sum 语义下结果完全等价（分桶求和 == 窗口总量），avg 语义不等价（分桶均值），调用方需自行保证。
+     * 入参同 metricChart 的 query.A（metric/from/by/order/aggs），by 为空返回空。
+     */
+    public List<ApmQueryModels.TopGroupTotal> metricTopGroupTotals(Map<String, Object> body) {
+        try {
+            MetricChartParams params = parseChartParams(body);
+            if (params == null || params.by().isEmpty()) {
+                return List.of();
+            }
+            String groupBy = params.by().get(0);
+            String groupColumn = resolveChartGroupColumn(groupBy, params.parsed().measurement());
+            String sql = MetricQueryBuilder.metricTopGroupsSql(
+                    metricDatabase, params.table(), params.fieldColumn(), groupColumn,
+                    toMillis(params.start()), toMillis(params.end()), params.filterClause(), params.topLimit(), params.aggs());
+            log.info("metricTopGroupTotals metric={} groupBy={} sql={}", params.metric(), groupBy, sql);
+            List<ApmQueryModels.TopGroupTotal> totals = readRepository.queryTopGroupTotals(sql);
+            log.info("metricTopGroupTotals metric={} groups={}", params.metric(), totals.size());
+            return totals;
+        } catch (Exception e) {
+            log.error("metricTopGroupTotals error: {}", e.getMessage(), e);
+            return List.of();
+        }
+    }
+
+    /**
+     * 分组 × 时间桶序列：单次 GROUP BY 分组列, epoch_sec 查询，Java 侧按组拆分并补零，
+     * 返回序列形态与 metricChart 分组路径一致（tags 含分组列），替代 1+N 模式。
+     * 入参同 metricChart 的 query.A；by 为空或字段不支持分桶合并时委托 metricChart。
+     */
+    public List<Map<String, Object>> metricGroupBucketSeries(Map<String, Object> body) {
+        try {
+            MetricChartParams params = parseChartParams(body);
+            if (params == null || params.by().isEmpty()) {
+                return metricChart(body);
+            }
+            String groupBy = params.by().get(0);
+            String groupColumn = resolveChartGroupColumn(groupBy, params.parsed().measurement());
+            String sql = MetricQueryBuilder.metricGroupBucketSeriesSql(
+                    metricDatabase, params.table(), params.fieldColumn(), groupColumn,
+                    toMillis(params.start()), toMillis(params.end()), params.filterClause(),
+                    params.interval(), params.aggs());
+            if (sql == null) {
+                // JVM GC 单调计数等不支持分桶合并的字段，回退逐组路径
+                return metricChart(body);
+            }
+            log.info("metricGroupBucketSeries metric={} groupBy={} sql={}", params.metric(), groupBy, sql);
+            List<ApmQueryModels.GroupBucketPoint> rows = readRepository.queryGroupBucketSeries(sql);
+            log.info("metricGroupBucketSeries metric={} rows={}", params.metric(), rows.size());
+            if (rows.isEmpty() && "service.http".equals(params.parsed().measurement()) && "resource".equals(groupBy)) {
+                // 与 metricChart 相同的回退：按 resource 无数据时尝试 url
+                String fallbackSql = MetricQueryBuilder.metricGroupBucketSeriesSql(
+                        metricDatabase, params.table(), params.fieldColumn(), "url",
+                        toMillis(params.start()), toMillis(params.end()), params.filterClause(),
+                        params.interval(), params.aggs());
+                rows = readRepository.queryGroupBucketSeries(fallbackSql);
+                groupBy = "url";
+            }
+            Map<String, List<MetricSeriesPoint>> byGroup = new LinkedHashMap<>();
+            for (ApmQueryModels.GroupBucketPoint row : rows) {
+                if (row.groupValue() == null || row.groupValue().isBlank()) {
+                    continue;
+                }
+                byGroup.computeIfAbsent(row.groupValue(), key -> new ArrayList<>())
+                        .add(new MetricSeriesPoint(row.epochSeconds(), row.value()));
+            }
+            List<Map<String, Object>> series = new ArrayList<>();
+            for (Map.Entry<String, List<MetricSeriesPoint>> entry : byGroup.entrySet()) {
+                List<MetricSeriesPoint> filled = TimeSeriesFillUtil.fillMetricSeries(
+                        entry.getValue(), toMillis(params.start()), toMillis(params.end()), params.interval());
+                List<List<Number>> values = filled.stream()
+                        .map(point -> java.util.Arrays.<Number>asList(point.epochSeconds() * 1000L, point.value()))
+                        .toList();
+                Map<String, Object> row = new HashMap<>();
+                row.put("values", values);
+                row.put("tags", Map.of(groupBy, entry.getKey()));
+                row.put("units", List.of("time", metricUnit(params.metric())));
+                series.add(row);
+            }
+            return series;
+        } catch (Exception e) {
+            log.error("metricGroupBucketSeries error: {}", e.getMessage(), e);
+            return List.of();
+        }
+    }
+
+    /** metricChart/metricTopGroupTotals/metricGroupBucketSeries 共用的 query.A 入参解析结果。 */
+    private record MetricChartParams(
+            String metric,
+            MetricIdentifierParser.ParsedMetric parsed,
+            String table,
+            String fieldColumn,
+            String filterClause,
+            List<String> by,
+            String aggs,
+            int topLimit,
+            int interval,
+            long start,
+            long end) {
+    }
+
+    private MetricChartParams parseChartParams(Map<String, Object> body) {
+        try {
+            Map<String, Object> queryRoot = body.get("query") instanceof Map<?, ?> queryMap
+                    ? (Map<String, Object>) queryMap
+                    : Map.of();
+            Map<String, Object> metricQuery = queryRoot.get("A") instanceof Map<?, ?> aMap
+                    ? (Map<String, Object>) aMap
+                    : Map.of();
+            String metric = String.valueOf(metricQuery.getOrDefault("metric", ""));
+            if (metric.isBlank()) {
+                return null;
+            }
+            long start = normalizeTime(toLong(body.get("start")));
+            long end = normalizeTime(toLong(body.get("end")));
+            int interval = toInt(body.get("interval"), 60);
+            List<MetricFilter> filters = parseFilters(metricQuery.get("from"));
+            List<String> by = parseStringList(metricQuery.get("by"));
+            Map<String, Object> order = metricQuery.get("order") instanceof Map<?, ?> orderMap
+                    ? (Map<String, Object>) orderMap
+                    : Map.of();
+            int topLimit = toInt(order.get("limit"), 50);
+            String aggs = stringValue(metricQuery.get("aggs"));
+            MetricIdentifierParser.ParsedMetric parsed = MetricIdentifierParser.parse(metric);
+            String table = MetricIdentifierParser.dorisTableName(parsed.measurement());
+            String fieldColumn = MetricIdentifierParser.toDorisFieldColumn(parsed);
+            String filterClause = buildFilterClause(filters);
+            return new MetricChartParams(metric, parsed, table, fieldColumn, filterClause,
+                    by, aggs, topLimit, interval, start, end);
+        } catch (Exception e) {
+            log.error("parseChartParams error: {}", e.getMessage(), e);
+            return null;
+        }
+    }
+
     private Map<String, Object> buildChartSeries(
             List<MetricSeriesPoint> points,
             Map<String, String> tags,

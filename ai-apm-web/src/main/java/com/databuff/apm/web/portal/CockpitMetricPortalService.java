@@ -153,24 +153,44 @@ public class CockpitMetricPortalService {
             // limit<=0 表示不截断（如派生计算需要全量服务）
             limit = TOP_GROUP_LIMIT;
         }
+        Map<String, Object> queryBody = buildMetricQueryBody(metric, aggs, serviceNames, "service", null,
+                window.startSec(), window.endSec(), window.interval(), TOP_GROUP_LIMIT, filters);
         List<Map<String, Object>> rows = new ArrayList<>();
-        for (Map<String, Object> raw : metricChart(metric, aggs, serviceNames, "service", null, window.startSec(), window.endSec(), window.interval(), TOP_GROUP_LIMIT, filters)) {
-            Map<String, Object> tags = tagMap(raw);
-            String service = stringValue(tags.get("service"));
-            if (service.isEmpty()) {
-                service = stringValue(tags.get("serviceId"));
+        if (!includeSeries && "sum".equalsIgnoreCase(aggs)) {
+            // sum 语义且无需序列：top 分组标量一次查询即最终结果。
+            // 原实现丢弃该查询的总量、再发 1+N 次逐组时序查询重算同样的数（接口 4-5s 的主因）。
+            for (ApmQueryModels.TopGroupTotal total : metricQueryService.metricTopGroupTotals(queryBody)) {
+                if (total.groupValue() == null || total.groupValue().isBlank()) {
+                    continue;
+                }
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("service", total.groupValue());
+                row.put("value", total.metricTotal());
+                rows.add(row);
             }
-            List<TrendPoint> points = readPoints(raw);
-            if (service.isEmpty() || points.isEmpty()) {
-                continue;
+        } else {
+            // 需要序列（下钻派生计算）或 avg 语义：单次 GROUP BY service, epoch_sec 查询后 Java 拆分/补零
+            List<Map<String, Object>> series = includeSeries
+                    ? metricQueryService.metricGroupBucketSeries(queryBody)
+                    : metricQueryService.metricChart(queryBody);
+            for (Map<String, Object> raw : series) {
+                Map<String, Object> tags = tagMap(raw);
+                String service = stringValue(tags.get("service"));
+                if (service.isEmpty()) {
+                    service = stringValue(tags.get("serviceId"));
+                }
+                List<TrendPoint> points = readPoints(raw);
+                if (service.isEmpty() || points.isEmpty()) {
+                    continue;
+                }
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("service", service);
+                row.put("value", aggregatePoints(points, aggs));
+                if (includeSeries) {
+                    row.put("series", toValueList(points));
+                }
+                rows.add(row);
             }
-            Map<String, Object> row = new LinkedHashMap<>();
-            row.put("service", service);
-            row.put("value", aggregatePoints(points, aggs));
-            if (includeSeries) {
-                row.put("series", toValueList(points));
-            }
-            rows.add(row);
         }
         rows.sort((a, b) -> Double.compare(doubleOf(b.get("value")), doubleOf(a.get("value"))));
         return rows.size() > limit ? new ArrayList<>(rows.subList(0, limit)) : rows;
@@ -409,6 +429,22 @@ public class CockpitMetricPortalService {
         if (metric.isEmpty()) {
             return List.of();
         }
+        Map<String, Object> body = buildMetricQueryBody(metric, aggs, serviceNames, groupBy, serviceName, startSec, endSec, interval, limit, filters);
+        log.info("metricChart query metric={} aggs={} serviceNames={} groupBy={} serviceName={} limit={} body={}", metric, aggs, serviceNames, groupBy, serviceName, limit, body);
+        List<Map<String, Object>> result = metricQueryService.metricChart(body);
+        log.info("metricChart result metric={} size={}", metric, result.size());
+        return result;
+    }
+
+    /**
+     * 构造 query.A 形态请求体（metricChart / metricTopGroupTotals / metricGroupBucketSeries 共用）。
+     * 内含长连接服务排除（applySlowExclusions）与依赖类指标归属规则。
+     */
+    private Map<String, Object> buildMetricQueryBody(
+            String metric, String aggs, List<String> serviceNames,
+            String groupBy, String serviceName,
+            long startSec, long endSec, int interval, int limit,
+            List<Map<String, Object>> filters) {
         filters = applySlowExclusions(filters);
         // 依赖调用类指标归属 srcService（调用方），其余归属 service
         String filterColumn = isDependencyMetric(metric) ? "srcService" : "service";
@@ -446,10 +482,7 @@ public class CockpitMetricPortalService {
         body.put("end", endSec);
         body.put("interval", interval);
         body.put("query", Map.of("A", queryA));
-        log.info("metricChart query metric={} aggs={} serviceNames={} groupBy={} serviceName={} limit={} body={}", metric, aggs, serviceNames, groupBy, serviceName, limit, body);
-        List<Map<String, Object>> result = metricQueryService.metricChart(body);
-        log.info("metricChart result metric={} size={}", metric, result.size());
-        return result;
+        return body;
     }
 
     private double aggregatePoints(List<TrendPoint> points, String aggs) {
