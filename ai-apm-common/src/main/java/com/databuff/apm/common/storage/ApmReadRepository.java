@@ -334,6 +334,19 @@ public class ApmReadRepository implements AutoCloseable {
         }
     }
 
+    /** 按时间桶的单值计数序列（如每桶不健康服务数），ts 为毫秒。 */
+    public List<ApmQueryModels.BucketCountPoint> queryBucketCounts(String sql) throws SQLException {
+        List<ApmQueryModels.BucketCountPoint> points = new ArrayList<>();
+        try (Connection connection = connection();
+             Statement statement = connection.createStatement();
+             ResultSet rs = statement.executeQuery(sql)) {
+            while (rs.next()) {
+                points.add(new ApmQueryModels.BucketCountPoint(rs.getLong("ts_millis"), rs.getLong("unhealthy_count")));
+            }
+        }
+        return points;
+    }
+
     public List<ApmQueryModels.TopologyEdge> queryTopologyEdges(String sql) throws SQLException {
         List<ApmQueryModels.TopologyEdge> edges = new ArrayList<>();
         try (Connection connection = connection();

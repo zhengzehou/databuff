@@ -174,6 +174,41 @@ public final class MetricQueryBuilder {
                 """.formatted(metricMinuteTsSelect(), database, metricTsWhere(fromMillis, toMillis));
     }
 
+    /**
+     * 每分钟桶的不健康服务数（工作台健康趋势用），色值规则在 SQL 内下推，
+     * 与 CockpitPortalService.trafficLightColor 保持一致：
+     * 非 green = grey(total &lt; min 或 total &lt;= 0) 或 yellow/red(error/cnt &gt; 阈值/2)。
+     * 替代 trafficLightSql 拉每服务每桶明细回 Java 判色再计数。
+     */
+    public static String unhealthyServiceTrendSql(
+            String database,
+            long fromMillis,
+            long toMillis,
+            double errorRateThreshold,
+            double minRequestCount) {
+        return """
+                SELECT ts_millis, COUNT(*) AS unhealthy_count
+                FROM (
+                    SELECT FLOOR(`ts` / 60000) * 60000 AS ts_millis,
+                           `service`,
+                           SUM(`error`) AS error_cnt,
+                           SUM(`cnt`) AS total_cnt
+                    FROM %s.`metric_service`
+                    WHERE %s
+                    GROUP BY ts_millis, `service`
+                ) t
+                WHERE `total_cnt` < %s
+                   OR `total_cnt` <= 0
+                   OR `error_cnt` * 1.0 / NULLIF(`total_cnt`, 0) > %s / 2
+                GROUP BY ts_millis
+                ORDER BY ts_millis ASC
+                """.formatted(
+                database,
+                metricTsWhere(fromMillis, toMillis),
+                minRequestCount,
+                errorRateThreshold);
+    }
+
     public static String spanListSql(String database, String service, long fromMillis, long toMillis, int limit) {
         return spanListSql(database, service, fromMillis, toMillis, limit, null, null);
     }
@@ -1524,6 +1559,16 @@ public final class MetricQueryBuilder {
                 WHERE %s
                   AND `service` IS NOT NULL AND `service` != ''
                 ORDER BY tag_value ASC
+                """.formatted(database, metricTsWhere(fromMillis, toMillis));
+    }
+
+    /** 只需去重服务数时的直接聚合，替代 distinctServicesSql 拉全量列表再取 size。 */
+    public static String countDistinctServicesSql(String database, long fromMillis, long toMillis) {
+        return """
+                SELECT COUNT(DISTINCT `service`) AS total_cnt
+                FROM %s.`metric_service`
+                WHERE %s
+                  AND `service` IS NOT NULL AND `service` != ''
                 """.formatted(database, metricTsWhere(fromMillis, toMillis));
     }
 

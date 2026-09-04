@@ -1,5 +1,6 @@
 package com.databuff.apm.web.cockpit;
 
+import com.databuff.apm.common.query.ApmQueryModels;
 import com.databuff.apm.common.query.ApmQueryModels.TrafficLightPoint;
 
 import com.databuff.apm.common.storage.ApmReadRepository;
@@ -35,6 +36,22 @@ public class TrafficLightService {
         try {
             String sql = MetricQueryBuilder.trafficLightSql(metricDatabase, fromMillis, toMillis);
             return readRepository.queryTrafficLight(sql);
+        } catch (Exception e) {
+            return Collections.emptyList();
+        }
+    }
+
+    /**
+     * 每分钟桶的不健康服务数（工作台健康趋势），色值规则在 SQL 内下推。
+     * 替代 trafficLight + Java 判色计数，阈值语义与 trafficLightColor 一致
+     * （非 green = total &lt; min 或 total &lt;= 0 或 error/cnt &gt; 阈值/2）。
+     */
+    public List<ApmQueryModels.BucketCountPoint> unhealthyServiceTrend(
+            long fromMillis, long toMillis, double errorRateThreshold, double minRequestCount) {
+        try {
+            String sql = MetricQueryBuilder.unhealthyServiceTrendSql(
+                    metricDatabase, fromMillis, toMillis, errorRateThreshold, minRequestCount);
+            return readRepository.queryBucketCounts(sql);
         } catch (Exception e) {
             return Collections.emptyList();
         }

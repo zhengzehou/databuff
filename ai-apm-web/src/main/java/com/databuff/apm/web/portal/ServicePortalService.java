@@ -1244,6 +1244,16 @@ public class ServicePortalService {
         }
     }
 
+    /** 只需去重服务数的直接聚合（COUNT(DISTINCT)），替代拉全量列表再取 size。 */
+    public long countDistinctServices(long from, long to) {
+        try {
+            return readRepository.queryRequestCount(
+                    MetricQueryBuilder.countDistinctServicesSql(metricDatabase, from, to));
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
     public Map<String, Object> getBasicServiceInstance(Map<String, Object> body) {
         String serviceId = resolveServiceId(body);
         long now = System.currentTimeMillis();

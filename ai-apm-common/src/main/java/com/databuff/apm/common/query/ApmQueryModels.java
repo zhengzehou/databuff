@@ -341,6 +341,10 @@ public final class ApmQueryModels {
     public record MetricTotalSnapshot(double total, long matchedRows) {
     }
 
+    /** 按时间桶聚合出的单值计数（如每桶不健康服务数），ts 为毫秒。 */
+    public record BucketCountPoint(long ts, long count) {
+    }
+
     public record TopologyEdge(String srcService, String dstService, long callCount, long errorCount) {
     }
 

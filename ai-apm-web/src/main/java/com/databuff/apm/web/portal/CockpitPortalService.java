@@ -1,7 +1,7 @@
 package com.databuff.apm.web.portal;
 
+import com.databuff.apm.common.query.ApmQueryModels;
 import com.databuff.apm.common.query.ApmQueryModels.TrafficLightPoint;
-import com.databuff.apm.common.time.ApmTimeZones;
 import com.databuff.apm.common.util.PortalServiceIdResolver;
 import com.databuff.apm.web.monitor.Alarm;
 import com.databuff.apm.web.cockpit.TrafficLightService;
@@ -9,7 +9,6 @@ import com.databuff.apm.web.monitor.AlarmStore;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
-import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -108,49 +107,31 @@ public class CockpitPortalService {
             return Map.of("total", 0, "healthRangeScoreList", List.of());
         }
 
-        // 使用虚拟线程执行器，每个任务独占一个虚拟线程
+        // 阈值来自内存配置，无需异步
+        Map<String, Object> config = trafficLightService.getConfig();
+        double errorRateThreshold = toDouble(config.get("errorRateThreshold"), 0.05);
+        double minRequestCount = toDouble(config.get("minRequestCount"), 10);
+
+        // 两个统计均直接在 SQL 内聚合出数字/每桶计数，
+        // 不再拉服务名列表与每服务每桶明细回 Java 判色
         try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
-            // 异步提交三个独立任务
-            CompletableFuture<List<String>> servicesFuture =
-                    CompletableFuture.supplyAsync(() -> servicePortalService.listDistinctServices(from, to), executor);
-            CompletableFuture<List<TrafficLightPoint>> trafficFuture =
-                    CompletableFuture.supplyAsync(() -> trafficLightService.trafficLight(from, to), executor);
-            CompletableFuture<Map<String, Object>> configFuture =
-                    CompletableFuture.supplyAsync(() -> trafficLightService.getConfig(), executor);
+            CompletableFuture<Long> totalFuture = CompletableFuture.supplyAsync(
+                    () -> servicePortalService.countDistinctServices(from, to), executor);
+            CompletableFuture<List<ApmQueryModels.BucketCountPoint>> trendFuture = CompletableFuture.supplyAsync(
+                    () -> trafficLightService.unhealthyServiceTrend(from, to, errorRateThreshold, minRequestCount), executor);
 
-            // 等待所有任务完成（任一失败则整体失败，可酌情降级）
-            CompletableFuture.allOf(servicesFuture, trafficFuture, configFuture).join();
-
-            // 获取结果
-            List<String> services = servicesFuture.join();
-            List<TrafficLightPoint> traffic = trafficFuture.join();
-            Map<String, Object> config = configFuture.join();
-
-            double errorRateThreshold = toDouble(config.get("errorRateThreshold"), 0.05);
-            double minRequestCount = toDouble(config.get("minRequestCount"), 10);
-
-            // 后续计算（与原逻辑完全一致）
-            Map<String, List<TrafficLightPoint>> grouped = new LinkedHashMap<>();
-            for (TrafficLightPoint point : traffic) {
-                grouped.computeIfAbsent(point.ts(), key -> new ArrayList<>()).add(point);
-            }
-
-            List<Map<String, Object>> healthRangeScoreList = grouped.entrySet().stream()
-                    .sorted(Map.Entry.comparingByKey())
-                    .map(entry -> {
-                        long unhealthy = entry.getValue().stream()
-                                .filter(row -> !"green".equals(
-                                        trafficLightColor(row, errorRateThreshold, minRequestCount)))
-                                .count();
+            long total = totalFuture.join();
+            List<Map<String, Object>> healthRangeScoreList = trendFuture.join().stream()
+                    .map(point -> {
                         Map<String, Object> row = new LinkedHashMap<>();
-                        row.put("timestamp", parseTsMillis(entry.getKey()));
-                        row.put("unhealthyCount", unhealthy);
+                        row.put("timestamp", point.ts());
+                        row.put("unhealthyCount", point.count());
                         return row;
                     })
                     .toList();
 
             Map<String, Object> data = new LinkedHashMap<>();
-            data.put("total", services.size());
+            data.put("total", total);
             data.put("healthRangeScoreList", healthRangeScoreList);
             return data;
 
@@ -882,46 +863,6 @@ public class CockpitPortalService {
             return Long.parseLong(String.valueOf(value).trim());
         } catch (NumberFormatException e) {
             return defaultValue;
-        }
-    }
-
-    private static String trafficLightColor(
-            TrafficLightPoint point,
-            double errorRateThreshold,
-            double minRequestCount) {
-        if (point.totalCount() < minRequestCount) {
-            return "grey";
-        }
-        if (point.totalCount() <= 0) {
-            return "grey";
-        }
-        double rate = (double) point.errorCount() / point.totalCount();
-        if (rate > errorRateThreshold) {
-            return "red";
-        }
-        if (rate > errorRateThreshold / 2) {
-            return "yellow";
-        }
-        return "green";
-    }
-
-    private static long parseTsMillis(String ts) {
-        if (ts == null || ts.isBlank()) {
-            return 0L;
-        }
-        String text = ts.trim();
-        if (text.chars().allMatch(Character::isDigit)) {
-            long n = Long.parseLong(text);
-            return n < 1_000_000_000_000L ? n * 1000L : n;
-        }
-        try {
-            return ApmTimeZones.wallClockToEpochMilli(text);
-        } catch (DateTimeParseException ignored) {
-            String iso = text.replace(' ', 'T');
-            if (!iso.contains("Z") && !iso.contains("+") && !iso.contains("-") && iso.contains("T")) {
-                iso += "Z";
-            }
-            return Instant.parse(iso).toEpochMilli();
         }
     }
 
