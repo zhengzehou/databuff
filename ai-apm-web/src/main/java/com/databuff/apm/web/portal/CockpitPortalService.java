@@ -17,6 +17,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 @Service
 public class CockpitPortalService {
@@ -105,35 +108,56 @@ public class CockpitPortalService {
             return Map.of("total", 0, "healthRangeScoreList", List.of());
         }
 
-        List<String> services = servicePortalService.listDistinctServices(from, to);
-        Map<String, Object> config = trafficLightService.getConfig();
-        double errorRateThreshold = toDouble(config.get("errorRateThreshold"), 0.05);
-        double minRequestCount = toDouble(config.get("minRequestCount"), 10);
+        // 使用虚拟线程执行器，每个任务独占一个虚拟线程
+        try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            // 异步提交三个独立任务
+            CompletableFuture<List<String>> servicesFuture =
+                    CompletableFuture.supplyAsync(() -> servicePortalService.listDistinctServices(from, to), executor);
+            CompletableFuture<List<TrafficLightPoint>> trafficFuture =
+                    CompletableFuture.supplyAsync(() -> trafficLightService.trafficLight(from, to), executor);
+            CompletableFuture<Map<String, Object>> configFuture =
+                    CompletableFuture.supplyAsync(() -> trafficLightService.getConfig(), executor);
 
-        List<TrafficLightPoint> traffic = trafficLightService.trafficLight(from, to);
-        Map<String, List<TrafficLightPoint>> grouped = new LinkedHashMap<>();
-        for (TrafficLightPoint point : traffic) {
-            grouped.computeIfAbsent(point.ts(), key -> new ArrayList<>()).add(point);
+            // 等待所有任务完成（任一失败则整体失败，可酌情降级）
+            CompletableFuture.allOf(servicesFuture, trafficFuture, configFuture).join();
+
+            // 获取结果
+            List<String> services = servicesFuture.join();
+            List<TrafficLightPoint> traffic = trafficFuture.join();
+            Map<String, Object> config = configFuture.join();
+
+            double errorRateThreshold = toDouble(config.get("errorRateThreshold"), 0.05);
+            double minRequestCount = toDouble(config.get("minRequestCount"), 10);
+
+            // 后续计算（与原逻辑完全一致）
+            Map<String, List<TrafficLightPoint>> grouped = new LinkedHashMap<>();
+            for (TrafficLightPoint point : traffic) {
+                grouped.computeIfAbsent(point.ts(), key -> new ArrayList<>()).add(point);
+            }
+
+            List<Map<String, Object>> healthRangeScoreList = grouped.entrySet().stream()
+                    .sorted(Map.Entry.comparingByKey())
+                    .map(entry -> {
+                        long unhealthy = entry.getValue().stream()
+                                .filter(row -> !"green".equals(
+                                        trafficLightColor(row, errorRateThreshold, minRequestCount)))
+                                .count();
+                        Map<String, Object> row = new LinkedHashMap<>();
+                        row.put("timestamp", parseTsMillis(entry.getKey()));
+                        row.put("unhealthyCount", unhealthy);
+                        return row;
+                    })
+                    .toList();
+
+            Map<String, Object> data = new LinkedHashMap<>();
+            data.put("total", services.size());
+            data.put("healthRangeScoreList", healthRangeScoreList);
+            return data;
+
+        } catch (Exception e) {
+            // 异常处理：可根据业务需求记录日志并返回降级数据
+            return Map.of("total", 0, "healthRangeScoreList", List.of());
         }
-
-        List<Map<String, Object>> healthRangeScoreList = grouped.entrySet().stream()
-                .sorted(Map.Entry.comparingByKey())
-                .map(entry -> {
-                    long unhealthy = entry.getValue().stream()
-                            .filter(row -> !"green".equals(
-                                    trafficLightColor(row, errorRateThreshold, minRequestCount)))
-                            .count();
-                    Map<String, Object> row = new LinkedHashMap<>();
-                    row.put("timestamp", parseTsMillis(entry.getKey()));
-                    row.put("unhealthyCount", unhealthy);
-                    return row;
-                })
-                .toList();
-
-        Map<String, Object> data = new LinkedHashMap<>();
-        data.put("total", services.size());
-        data.put("healthRangeScoreList", healthRangeScoreList);
-        return data;
     }
 
     public Map<String, Object> countServiceAlarms(Map<String, Object> body) {

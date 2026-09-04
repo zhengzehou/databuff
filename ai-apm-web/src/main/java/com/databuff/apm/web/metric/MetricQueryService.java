@@ -25,6 +25,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.stream.Collectors;
 
 @Service
 public class MetricQueryService {
@@ -199,18 +204,31 @@ public class MetricQueryService {
                         groupColumn = fallbackColumn;
                     }
                 }
-                List<Map<String, Object>> series = new ArrayList<>();
-                for (String groupValue : groups) {
-                    String sql = MetricQueryBuilder.metricFieldSeriesByGroupSql(
-                            metricDatabase, table, fieldColumn, groupColumn, groupValue,
-                            toMillis(start), toMillis(end), filterClause, interval, aggs);
-                    series.add(buildChartSeries(
-                            readRepository.queryMetricSeries(sql),
-                            Map.of(groupBy, groupValue),
-                            metric,
-                            start,
-                            end,
-                            interval));
+                String finalGroupColumn = groupColumn;
+                List<Map<String, Object>> series;
+                try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+                    List<Future<Map<String, Object>>> futures = executor.invokeAll(
+                            groups.stream()
+                                    .map(groupValue -> (Callable<Map<String, Object>>) () -> {
+                                        String sql = MetricQueryBuilder.metricFieldSeriesByGroupSql(
+                                                metricDatabase, table, fieldColumn, finalGroupColumn, groupValue,
+                                                toMillis(start), toMillis(end), filterClause, interval, aggs);
+                                        return buildChartSeries(
+                                                readRepository.queryMetricSeries(sql),
+                                                Map.of(groupBy, groupValue),
+                                                metric,
+                                                start,
+                                                end,
+                                                interval);
+                                    })
+                                    .collect(Collectors.toList())
+                    );
+                    series = futures.stream()
+                            .map(f -> {
+                                try { return f.get(); }
+                                catch (Exception e) { throw new RuntimeException(e); }
+                            })
+                            .collect(Collectors.toList());
                 }
                 log.info("metricChart series return metric={} count={} ", metric, series.size());
                 return series;

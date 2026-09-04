@@ -10,6 +10,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.stream.Collectors;
 
 /**
  * 运维监控看板的模块化指标查询服务。
@@ -57,19 +61,48 @@ public class CockpitMetricPortalService {
     public List<Map<String, Object>> kpiSummary(Map<String, Object> body) {
         Window window = parseWindow(body);
         List<String> serviceNames = parseStringList(body.get("serviceNames"));
-        List<Map<String, Object>> result = new ArrayList<>();
-        for (MetricItem item : parseItems(body.get("items"))) {
-            double today = aggregate(item, serviceNames, window, window.startSec(), window.endSec());
-            long yStart = window.startSec() - window.durationSec();
-            long yEnd = window.endSec() - window.durationSec();
-            double yesterday = aggregate(item, serviceNames, window, yStart, yEnd);
-            Map<String, Object> row = new LinkedHashMap<>();
-            row.put("key", item.key());
-            row.put("today", today);
-            row.put("yesterday", yesterday);
-            result.add(row);
+        List<MetricItem> items = parseItems(body.get("items"));
+        if (items == null || items.isEmpty()) {
+            return List.of();
         }
-        return result;
+
+        long yStart = window.startSec() - window.durationSec();
+        long yEnd = window.endSec() - window.durationSec();
+
+        try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            // 提交每个 item 的计算任务
+            List<CompletableFuture<Map<String, Object>>> futures = items.stream()
+                    .map(item -> CompletableFuture.supplyAsync(() -> {
+                        // 内部并行计算 today 和 yesterday
+                        CompletableFuture<Double> todayFuture = CompletableFuture.supplyAsync(
+                                () -> aggregate(item, serviceNames, window, window.startSec(), window.endSec()),
+                                executor
+                        );
+                        CompletableFuture<Double> yesterdayFuture = CompletableFuture.supplyAsync(
+                                () -> aggregate(item, serviceNames, window, yStart, yEnd),
+                                executor
+                        );
+
+                        // 等待两个结果（可添加超时）
+                        double today = todayFuture.join();
+                        double yesterday = yesterdayFuture.join();
+
+                        Map<String, Object> row = new LinkedHashMap<>();
+                        row.put("key", item.key());
+                        row.put("today", today);
+                        row.put("yesterday", yesterday);
+                        return row;
+                    }, executor))
+                    .toList();
+
+            // 等待所有 item 完成，并保持顺序
+            return futures.stream()
+                    .map(CompletableFuture::join)
+                    .collect(Collectors.toList());
+        } catch (Exception e) {
+            // 建议记录日志
+            throw new RuntimeException("Failed to compute kpi summary", e);
+        }
     }
 
     /**
@@ -204,6 +237,52 @@ public class CockpitMetricPortalService {
             rows.add(row);
         }
         rows.sort((a, b) -> Double.compare(doubleOf(b.get("today")), doubleOf(a.get("today"))));
+        return rows.size() > limit ? new ArrayList<>(rows.subList(0, limit)) : rows;
+    }
+
+    /**
+     * 慢调用排行：跨 6 协议(http/rpc/db/redis/mq/remote)聚合 slow 列，按 service 求和后返回 Top N。
+     * 用于替代在慢调用场景复用 serviceRanking / kpiSummary（rollup 的 slow / slowCnt 均为 0，且前者过重）。
+     * 入参 { start, end, interval, serviceNames, limit }，返回 [{ service, value }]，
+     * value = 该服务跨协议 slow 列求和后的慢调用总数（已过滤 <=0、按 value 降序、按 limit 截断）。
+     */
+    public List<Map<String, Object>> slowRanking(Map<String, Object> body) {
+        Window window = parseWindow(body);
+        List<String> serviceNames = parseStringList(body.get("serviceNames"));
+        int limit = toInt(body.get("limit"), 10);
+        if (limit <= 0) {
+            // limit<=0 表示不截断（如 KPI 总数需全量服务求和）
+            limit = TOP_GROUP_LIMIT;
+        }
+        List<String> slowMetrics = List.of(
+                "service.http.slow", "service.rpc.slow", "service.db.slow",
+                "service.redis.slow", "service.mq.slow", "service.remote.slow");
+        Map<String, Double> totals = new LinkedHashMap<>();
+        for (String metric : slowMetrics) {
+            for (Map<String, Object> raw : metricChart(metric, "sum", serviceNames, "service", null, window.startSec(), window.endSec(), window.interval())) {
+                Map<String, Object> tags = tagMap(raw);
+                String service = stringValue(tags.get("service"));
+                if (service.isEmpty()) {
+                    service = stringValue(tags.get("serviceId"));
+                }
+                List<TrendPoint> points = readPoints(raw);
+                if (service.isEmpty() || points.isEmpty()) {
+                    continue;
+                }
+                totals.merge(service, sumPoints(points), Double::sum);
+            }
+        }
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (Map.Entry<String, Double> entry : totals.entrySet()) {
+            if (entry.getValue() <= 0) {
+                continue;
+            }
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("service", entry.getKey());
+            row.put("value", entry.getValue());
+            rows.add(row);
+        }
+        rows.sort((a, b) -> Double.compare(doubleOf(b.get("value")), doubleOf(a.get("value"))));
         return rows.size() > limit ? new ArrayList<>(rows.subList(0, limit)) : rows;
     }
 
