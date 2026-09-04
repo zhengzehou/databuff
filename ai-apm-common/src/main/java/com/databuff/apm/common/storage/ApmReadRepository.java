@@ -318,6 +318,22 @@ public class ApmReadRepository implements AutoCloseable {
         }
     }
 
+    /** 无分桶窗口聚合：单行 SUM 结果 + 命中行数（区分"无数据"与"真实 0 值"）。 */
+    public ApmQueryModels.MetricTotalSnapshot queryMetricTotal(String sql) throws SQLException {
+        try (Connection connection = connection();
+             Statement statement = connection.createStatement();
+             ResultSet rs = statement.executeQuery(sql)) {
+            if (!rs.next()) {
+                return new ApmQueryModels.MetricTotalSnapshot(0, 0);
+            }
+            double total = rs.getDouble("metric_total");
+            if (rs.wasNull()) {
+                total = 0;
+            }
+            return new ApmQueryModels.MetricTotalSnapshot(total, rs.getLong("matched_rows"));
+        }
+    }
+
     public List<ApmQueryModels.TopologyEdge> queryTopologyEdges(String sql) throws SQLException {
         List<ApmQueryModels.TopologyEdge> edges = new ArrayList<>();
         try (Connection connection = connection();

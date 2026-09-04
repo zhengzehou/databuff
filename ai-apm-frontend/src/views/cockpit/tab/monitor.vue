@@ -113,7 +113,7 @@
               <template slot-scope="{ row }">{{ formatValue(row.yesterday) }}</template>
             </el-table-column>
           </el-table>
-          <div v-if="!interfaceRankingLoading && !interfaceRankingRows.length" class="tc mt-12" style="color:var(--color-text-secondary);font-size:12px;">暂无接口数据</div>
+          <div v-if="!interfaceRankingLoading && !interfaceRankingRows.length" class="tc mt-12" style="color:var(--color-text-secondary);font-size:12px;">{{ rankingEmptyText }}</div>
           <div v-if="interfaceRankingRows.length > 1" class="mt-8" style="font-size:12px;color:var(--color-text-secondary);">点击列表切换接口趋势</div>
         </template>
         <template v-else>
@@ -124,6 +124,7 @@
             class="rank-table"
             max-height="480"
             style="overflow:auto"
+            :empty-text="rankingEmptyText"
             @row-click="openDrill">
             <el-table-column type="index" label="#" width="50"></el-table-column>
             <el-table-column label="服务" prop="service" min-width="160">
@@ -281,8 +282,13 @@ import CockpitApi from '../api';
 import i18n from '@/i18n';
 import dayjs from 'dayjs';
 import { toAsyncWait } from '@/utils/common';
-import { fetchKpiSummary, fetchMetricTrends, fetchServiceRanking, fetchServiceEndpoints, toSeriesPoints, Series } from '@/utils/metricQuery';
+import { fetchKpiSummary, fetchMetricTrends, fetchServiceRanking, fetchServiceEndpoints, toSeriesPoints, Series, MetricFilter } from '@/utils/metricQuery';
 import ServiceJvmTab from '@/views/appMonitor/serviceDetail/tab-jvm.vue';
+
+// 慢调用口径：查询条件 durationRange = '3000ms+'（单次请求耗时 >3s，DurationRangeUtil 分桶），
+// 统计值为该桶 cnt 求和，即真实的 >3s 慢请求总数。
+// 不用 slow 列：其阈值写死 500ms 且不可配；slowCnt/verySlowCnt 列从未写入（恒为 0）。
+const SLOW_FILTERS: MetricFilter[] = [{ left: 'durationRange', operator: '=', right: '3000ms+', connector: 'AND' }];
 
 @Component({ components: { MetricKpiCard, MetricTrendCard, CardTrend, BasicChart, ServiceJvmTab } })
 export default class MonitorTab extends Vue {
@@ -293,7 +299,7 @@ export default class MonitorTab extends Vue {
   private rankingOptions = [
     { label: '请求量', value: 'req' },
     { label: '错误数', value: 'err' },
-    { label: '异常数', value: 'exc' },
+    { label: '慢请求指标', value: 'slow' },
   ];
   private rankingRows: Array<{ service: string; value: number }> = [];
   private rankingLoading = false;
@@ -418,9 +424,10 @@ export default class MonitorTab extends Vue {
         drill: { metric: 'service.error', aggs: 'avg' as const, unit: '%', valueLabel: '错误率', countMetric: 'service.cnt', countAggs: 'sum' as const, countLabel: '错误次数' },
       },
       {
-        title: '慢调用', metric: 'service.slowCnt', aggs: 'sum' as const, unit: '', higherIsBetter: false,
-        tip: '慢调用 = service.slowCnt（慢调用次数）在所选时间窗内各时间桶求和，聚合方式为 sum。\n点击数值可下钻查看各服务的慢调用次数。',
-        drill: { metric: 'service.slowCnt', aggs: 'sum' as const, unit: '', valueLabel: '慢调用次数' },
+        title: '慢调用', metric: 'service.http.cnt', aggs: 'sum' as const, unit: '', higherIsBetter: false,
+        filters: SLOW_FILTERS,
+        tip: '慢调用 = 单次请求耗时 >3s。',
+        drill: { metric: 'service.http.cnt', aggs: 'sum' as const, unit: '', valueLabel: '慢调用次数', filters: SLOW_FILTERS },
       },
     ];
   }
@@ -485,10 +492,17 @@ export default class MonitorTab extends Vue {
 
   private get rankMetricMap () {
     return {
-      req: { metric: 'service.cnt', aggs: 'sum' as const, name: '请求量' },
+      req: { metric: 'service.http.cnt', aggs: 'sum' as const, name: '请求量' },
       err: { metric: 'service.error', aggs: 'sum' as const, name: '错误数' },
-      exc: { metric: 'service.exception.cnt', aggs: 'sum' as const, name: '异常数' },
+      slow: { metric: 'service.http.cnt', aggs: 'sum' as const, name: '慢调用', filters: SLOW_FILTERS },
     };
+  }
+
+  // 排行无数据时的占位文案，按当前指标区分，避免空白图表/表格
+  private get rankingEmptyText () {
+    if (this.rankingMetric === 'slow') return '暂无慢请求数据';
+    if (this.rankingMetric === 'err') return '暂无错误数据';
+    return '暂无数据';
   }
 
   @Watch('globalTimeV2', { deep: true })
@@ -666,7 +680,10 @@ export default class MonitorTab extends Vue {
     }
     this.kpiLoading = true;
     try {
-      const rows = await fetchKpiSummary(window, this.kpiList.map((k) => ({ key: k.title, metric: k.metric, aggs: k.aggs })));
+      // 慢调用随 kpiSummary 一起返回：item 上带 filters（durationRange='3000ms+'），
+      // 服务端下推到 SQL WHERE，SUM(cnt) 即真实的 >3s 慢请求总数
+      const items = this.kpiList.map((k) => ({ key: k.title, metric: k.metric, aggs: k.aggs, filters: (k as any).filters }));
+      const rows = await fetchKpiSummary(window, items);
       const data: Record<string, { today: number; yesterday: number }> = {};
       rows.forEach((row) => {
         const item = this.kpiList.find((k) => k.title === row.key);
@@ -721,64 +738,58 @@ export default class MonitorTab extends Vue {
     const cfg = this.rankMetricMap[this.rankingMetric as keyof typeof this.rankMetricMap];
     this.rankingLoading = true;
     try {
-      const rows = await fetchServiceRanking(window, cfg.metric, cfg.aggs, 10);
+      const rows = await fetchServiceRanking(window, cfg.metric, cfg.aggs, 10, false, (cfg as any).filters);
       this.rankingRows = rows.map((r) => ({ service: r.service, value: r.value }));
     } finally {
       this.rankingLoading = false;
     }
   }
 
+  // 接口排行：单服务时按接口(resource)分组取 Top N
   private async loadInterfaceRanking () {
     const window = this.trendWindow;
     if (!window) {
-      console.warn('[interfaceRanking] window null, skip');
       return;
     }
     const cfg = this.rankMetricMap[this.rankingMetric as keyof typeof this.rankMetricMap];
     const serviceName = this.singleServiceCurrent.service;
     const serviceId = this.singleServiceCurrent.serviceId;
-    console.log('[interfaceRanking] start', { rankingMetric: this.rankingMetric, cfg, serviceName, serviceId, window });
     this.interfaceRankingLoading = true;
     try {
-      const candidates: Array<{metric:string,aggs:'sum'|'avg'}> = [];
+      const candidates: Array<{metric:string,aggs:'sum'|'avg',filters?:MetricFilter[]}> = [];
       if (this.rankingMetric === 'req') {
         candidates.push({metric:'service.http.cnt',aggs:'sum'},{metric:'service.rpc.cnt',aggs:'sum'},{metric:'service.db.cnt',aggs:'sum'},{metric:'service.redis.cnt',aggs:'sum'},{metric:'service.mq.cnt',aggs:'sum'},{metric:'service.remote.cnt',aggs:'sum'});
       } else if (this.rankingMetric === 'err') {
         candidates.push({metric:'service.http.error',aggs:'avg'},{metric:'service.rpc.error',aggs:'avg'},{metric:'service.db.error',aggs:'avg'});
       } else {
-        const drill = this.resolveDrillMetric(cfg.metric, cfg.aggs);
-        candidates.push({metric:drill.metric, aggs: drill.aggs as any});
+        // 慢调用等其余指标：经 resolveDrillMetric 映射到接口级指标，
+        // filters（如慢调用 durationRange='3000ms+'）随之下推
+        const drill = this.resolveDrillMetric(cfg.metric, cfg.aggs, (cfg as any).filters);
+        candidates.push({metric:drill.metric, aggs: drill.aggs as any, filters: drill.filters});
       }
       let rows: any[] = [];
       for (const cand of candidates) {
-        console.log('[interfaceRanking] try serviceName', { cand, serviceName });
-        let r = await fetchServiceEndpoints(window, serviceName, cand.metric, cand.aggs, 'resource', this.interfaceRankingLimit);
-        console.log('[interfaceRanking] result serviceName', { cand, size: r?.length });
-        if (r && r.length) { rows = r; break; }
-        if (serviceId && serviceId !== serviceName) {
-          console.log('[interfaceRanking] retry serviceId', { cand, serviceId });
-          const r2 = await fetchServiceEndpoints(window, serviceId, cand.metric, cand.aggs, 'resource', this.interfaceRankingLimit);
-          console.log('[interfaceRanking] result serviceId', { cand, size: r2?.length });
-          if (r2 && r2.length) { rows = r2; break; }
+        let r = await fetchServiceEndpoints(window, serviceName, cand.metric, cand.aggs, 'resource', this.interfaceRankingLimit, cand.filters);
+        if (!(r && r.length) && serviceId && serviceId !== serviceName) {
+          // OTLP 指标常以 serviceId 归档，按 name 查不到时回退按 id 查
+          r = await fetchServiceEndpoints(window, serviceId, cand.metric, cand.aggs, 'resource', this.interfaceRankingLimit, cand.filters);
+        }
+        if (r && r.length) {
+          rows = r;
+          break;
         }
       }
       if (!rows.length) {
-        const drill = this.resolveDrillMetric(cfg.metric, cfg.aggs);
-        console.log('[interfaceRanking] fallback groupBy', drill);
-        let fallback = await fetchServiceEndpoints(window, serviceName, drill.metric, drill.aggs, drill.groupBy, this.interfaceRankingLimit);
-        console.log('[interfaceRanking] fallback result serviceName', { size: fallback?.length });
-        if (fallback && fallback.length) rows = fallback;
-        else if (serviceId && serviceId !== serviceName) {
-          const fallback2 = await fetchServiceEndpoints(window, serviceId, drill.metric, drill.aggs, drill.groupBy, this.interfaceRankingLimit);
-          console.log('[interfaceRanking] fallback result serviceId', { size: fallback2?.length });
-          if (fallback2 && fallback2.length) rows = fallback2;
+        const drill = this.resolveDrillMetric(cfg.metric, cfg.aggs, (cfg as any).filters);
+        let fallback = await fetchServiceEndpoints(window, serviceName, drill.metric, drill.aggs, drill.groupBy, this.interfaceRankingLimit, drill.filters);
+        if (!(fallback && fallback.length) && serviceId && serviceId !== serviceName) {
+          fallback = await fetchServiceEndpoints(window, serviceId, drill.metric, drill.aggs, drill.groupBy, this.interfaceRankingLimit, drill.filters);
         }
+        if (fallback && fallback.length) rows = fallback;
       }
-      // 错误量：无错误时不展示（today/yesterday 均为 0 则过滤，全部为 0 则空列表）
-      if (this.rankingMetric === 'err') {
-        const before = rows.length;
+      // 错误数/慢调用：今日昨日均为 0 的接口不展示
+      if (this.rankingMetric === 'err' || this.rankingMetric === 'slow') {
         rows = rows.filter((r:any) => (r.today || 0) > 0 || (r.yesterday || 0) > 0);
-        if (before !== rows.length) console.log('[interfaceRanking] err filtered zero', { before, after: rows.length });
       }
       this.rankingInterfaceEndpoints = rows.map((r:any) => ({
         name: r.name, today: r.today, yesterday: r.yesterday,
@@ -790,8 +801,6 @@ export default class MonitorTab extends Vue {
         yesterday: r.yesterday,
       }));
       this.rankingInterfaceActive = rows[0]?.name || '';
-      console.log('[interfaceRanking] done', { rows: rows.length, active: this.rankingInterfaceActive });
-      if (!rows.length) console.warn('[interfaceRanking] empty final', { serviceName, serviceId, metric: cfg.metric, window });
     } catch (e) {
       console.error('[interfaceRanking] error', e);
       this.rankingInterfaceEndpoints = [];
@@ -832,23 +841,20 @@ export default class MonitorTab extends Vue {
 
   // service / service.exception 等 rollup 表没有 resource(接口) 维度，按 resource 分组会无数据。
   // 接口(端点)级数据在带 resource/url 维度的 measurement 上（如 service.http），这里做映射。
-  private resolveDrillMetric (metric: string, aggs: string) {
-    // service / service.exception 等 rollup 表没有 resource(接口) 维度，按 resource 分组会无数据。
-    // 接口(端点)级数据在带 resource/url 维度的 measurement 上（如 service.http），这里做映射。
-    // 兼容排行别名 req/err/exc
+  // 兼容排行别名 req/err/exc；filters 原样透传（如慢调用 durationRange='3000ms+'）。
+  private resolveDrillMetric (metric: string, aggs: string, filters?: MetricFilter[]) {
     const map: Record<string, { metric: string; aggs: string; groupBy: string }> = {
       'service.cnt': { metric: 'service.http.cnt', aggs: 'sum', groupBy: 'resource' },
       'req': { metric: 'service.http.cnt', aggs: 'sum', groupBy: 'resource' },
       'service.error': { metric: 'service.http.error', aggs: 'avg', groupBy: 'resource' },
       'err': { metric: 'service.http.error', aggs: 'avg', groupBy: 'resource' },
-      'service.slowCnt': { metric: 'service.http.slowCnt', aggs: 'sum', groupBy: 'resource' },
       'service.exception.cnt': { metric: 'service.exception.cnt', aggs: 'sum', groupBy: 'resource' },
       'exc': { metric: 'service.exception.cnt', aggs: 'sum', groupBy: 'resource' },
     };
     const hit = map[metric];
-    if (hit) return hit;
+    if (hit) return { ...hit, filters };
     // 兜底：未知别名按 resource 分组，aggs 为空时默认 sum
-    return { metric, aggs: aggs || 'sum', groupBy: 'resource' };
+    return { metric, aggs: aggs || 'sum', groupBy: 'resource', filters };
   }
 
   private get drillActiveSource () {
@@ -884,13 +890,14 @@ export default class MonitorTab extends Vue {
     this.drillSource = [];
     this.drillRows = [];
     const cfg = cfgOverride && cfgOverride.metric ? cfgOverride : this.rankMetricMap[this.rankingMetric as keyof typeof this.rankMetricMap];
-    const drill = this.resolveDrillMetric(cfg.metric, cfg.aggs);
+    const drill = this.resolveDrillMetric(cfg.metric, cfg.aggs, (cfg as any).filters);
     try {
       const window = this.trendWindow;
       if (!window) {
         return;
       }
-      const rows = await fetchServiceEndpoints(window, row.service, drill.metric, drill.aggs, drill.groupBy, this.drillLimit);
+      // filters（如慢调用 durationRange='3000ms+'）随下钻请求下推服务端
+      const rows = await fetchServiceEndpoints(window, row.service, drill.metric, drill.aggs, drill.groupBy, this.drillLimit, drill.filters);
       this.drillEndpoints = rows.map((r: any) => ({
         name: r.name,
         today: r.today,
@@ -933,8 +940,9 @@ export default class MonitorTab extends Vue {
       return;
     }
     try {
-      // 值指标按服务聚合（服务筛选已在服务端完成），includeSeries 附带分桶序列用于派生计算
-      const valueRows = await fetchServiceRanking(window, cfg.metric, cfg.aggs, this.kpiDrillLimit, true);
+      // 值指标按服务聚合（服务筛选已在服务端完成），includeSeries 附带分桶序列用于派生计算；
+      // 慢调用（cfg.filters = durationRange='3000ms+'）同样走此路径，'3000ms+' 过滤保证无 0 值服务
+      const valueRows = await fetchServiceRanking(window, cfg.metric, cfg.aggs, this.kpiDrillLimit, true, cfg.filters);
       let rows = valueRows.map((r) => ({ service: r.service, value: r.value, count: 0 }));
       if (cfg.countMetric) {
         const countRows = await fetchServiceRanking(window, cfg.countMetric, cfg.countAggs, 0, true);
@@ -948,7 +956,7 @@ export default class MonitorTab extends Vue {
           return { ...r, count };
         });
       } else {
-        // 无独立次数指标时，数值本身即为次数（如慢调用 slowCnt）
+        // 无独立次数指标时，数值本身即为次数（如慢调用 slow）
         rows = rows.map((r) => ({ ...r, count: r.value }));
       }
       this.kpiDrillRows = rows
@@ -967,7 +975,7 @@ export default class MonitorTab extends Vue {
     this.kpiDrillVisible = false;
     this.openDrill(
       { service: row.service },
-      { metric: cfg.metric, aggs: cfg.aggs, name: cfg.title },
+      { metric: cfg.metric, aggs: cfg.aggs, name: cfg.title, filters: cfg.filters },
     );
   }
 
@@ -1045,7 +1053,7 @@ export default class MonitorTab extends Vue {
 
 .trend-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 16px;
 
   @media (max-width: 1400px) {

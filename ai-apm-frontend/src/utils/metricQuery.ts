@@ -15,10 +15,19 @@ export interface Series {
   data: SeriesPoint[];
 }
 
+// 标签过滤条件，与查询 DSL 的 from 形态一致：{left, operator, right, connector}
+export interface MetricFilter {
+  left: string;
+  operator: string;
+  right: string | string[];
+  connector?: string;
+}
+
 export interface MetricItem {
   key: string;
   metric: string;
   aggs: 'sum' | 'avg';
+  filters?: MetricFilter[];
 }
 
 export interface TrendWindow {
@@ -71,13 +80,14 @@ export async function fetchMetricTrends (window: TrendWindow, items: MetricItem[
   return unwrap(resp);
 }
 
-// 服务排行（includeSeries 时附带每服务分桶序列，供派生计算）
+// 服务排行（includeSeries 时附带每服务分桶序列，供派生计算；filters 为标签过滤下推服务端）
 export async function fetchServiceRanking (
   window: TrendWindow,
   metric: string,
   aggs: 'sum' | 'avg',
   limit: number,
   includeSeries = false,
+  filters?: MetricFilter[],
 ): Promise<RankingRow[]> {
   const resp = await MetricApi.serviceRanking({
     ...window,
@@ -86,11 +96,12 @@ export async function fetchServiceRanking (
     aggs,
     limit,
     includeSeries,
+    filters,
   });
   return unwrap(resp);
 }
 
-// 接口趋势下钻：单服务按维度分组 Top N
+// 接口趋势下钻：单服务按维度分组 Top N（filters 为标签过滤下推服务端）
 export async function fetchServiceEndpoints (
   window: TrendWindow,
   service: string,
@@ -98,6 +109,7 @@ export async function fetchServiceEndpoints (
   aggs: 'sum' | 'avg',
   groupBy: string,
   limit: number,
+  filters?: MetricFilter[],
 ): Promise<EndpointRow[]> {
   const resp = await MetricApi.serviceEndpoints({
     ...window,
@@ -107,6 +119,7 @@ export async function fetchServiceEndpoints (
     aggs,
     groupBy,
     limit,
+    filters,
   });
   return unwrap(resp);
 }

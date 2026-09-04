@@ -337,6 +337,10 @@ public final class ApmQueryModels {
         }
     }
 
+    /** 窗口内无分桶直接聚合的结果：matchedRows=0 表示无数据行（区别于真实 0 值），供上层回退重试。 */
+    public record MetricTotalSnapshot(double total, long matchedRows) {
+    }
+
     public record TopologyEdge(String srcService, String dstService, long callCount, long errorCount) {
     }
 

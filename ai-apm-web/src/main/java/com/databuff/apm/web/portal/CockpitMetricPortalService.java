@@ -1,5 +1,6 @@
 package com.databuff.apm.web.portal;
 
+import com.databuff.apm.common.query.ApmQueryModels;
 import com.databuff.apm.web.metric.MetricQueryService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,8 +42,8 @@ public class CockpitMetricPortalService {
         }
     }
 
-    /** 单个指标项：key 为前端回传标识（如卡片标题）。 */
-    private record MetricItem(String key, String metric, String aggs) {
+    /** 单个指标项：key 为前端回传标识（如卡片标题），filters 为标签过滤（DSL from 形态）。 */
+    private record MetricItem(String key, String metric, String aggs, List<Map<String, Object>> filters) {
     }
 
     /** 一个时间点：t 为毫秒时间戳。 */
@@ -143,13 +144,14 @@ public class CockpitMetricPortalService {
         String metric = stringValue(body.get("metric"));
         String aggs = stringValue(body.get("aggs"));
         boolean includeSeries = Boolean.TRUE.equals(body.get("includeSeries"));
+        List<Map<String, Object>> filters = parseFilters(body.get("filters"));
         int limit = toInt(body.get("limit"), 10);
         if (limit <= 0) {
             // limit<=0 表示不截断（如派生计算需要全量服务）
             limit = TOP_GROUP_LIMIT;
         }
         List<Map<String, Object>> rows = new ArrayList<>();
-        for (Map<String, Object> raw : metricChart(metric, aggs, serviceNames, "service", null, window.startSec(), window.endSec(), window.interval())) {
+        for (Map<String, Object> raw : metricChart(metric, aggs, serviceNames, "service", null, window.startSec(), window.endSec(), window.interval(), TOP_GROUP_LIMIT, filters)) {
             Map<String, Object> tags = tagMap(raw);
             String service = stringValue(tags.get("service"));
             if (service.isEmpty()) {
@@ -184,8 +186,9 @@ public class CockpitMetricPortalService {
         String aggs = stringValue(body.get("aggs"));
         String groupBy = stringValue(body.get("groupBy"));
         int limit = toInt(body.get("limit"), 6);
-        // 兼容前端排行别名 req/err/exc 及空 aggs
+        // 兼容前端排行别名 req/err/exc 及空 aggs；filters 为标签过滤（DSL from 形态，如 durationRange='3000ms+'）
         metric = resolveEndpointMetricAlias(metric);
+        List<Map<String, Object>> filters = parseFilters(body.get("filters"));
         if (aggs.isEmpty()) {
             aggs = defaultAggsForMetric(metric);
         }
@@ -199,11 +202,11 @@ public class CockpitMetricPortalService {
         }
         // serviceNames 非空时优先使用 serviceNames 筛选，否则使用 service
         String effectiveService = service.isEmpty() ? serviceNames.get(0) : service;
-        List<Map<String, Object>> todaySeries = metricChart(metric, aggs, serviceNames, groupBy, effectiveService, window.startSec(), window.endSec(), window.interval(), limit);
+        List<Map<String, Object>> todaySeries = metricChart(metric, aggs, serviceNames, groupBy, effectiveService, window.startSec(), window.endSec(), window.interval(), limit, filters);
         log.info("serviceEndpoints todaySeries size={} for service={} metric={}", todaySeries.size(), effectiveService, metric);
         long yStart = window.startSec() - window.durationSec();
         long yEnd = window.endSec() - window.durationSec();
-        List<Map<String, Object>> yesterdaySeries = metricChart(metric, aggs, serviceNames, groupBy, effectiveService, yStart, yEnd, window.interval(), limit);
+        List<Map<String, Object>> yesterdaySeries = metricChart(metric, aggs, serviceNames, groupBy, effectiveService, yStart, yEnd, window.interval(), limit, filters);
         log.info("serviceEndpoints yesterdaySeries size={} for service={} metric={}", yesterdaySeries.size(), effectiveService, metric);
         long shiftMillis = window.durationSec() * 1000L;
 
@@ -240,61 +243,61 @@ public class CockpitMetricPortalService {
         return rows.size() > limit ? new ArrayList<>(rows.subList(0, limit)) : rows;
     }
 
-    /**
-     * 慢调用排行：跨 6 协议(http/rpc/db/redis/mq/remote)聚合 slow 列，按 service 求和后返回 Top N。
-     * 用于替代在慢调用场景复用 serviceRanking / kpiSummary（rollup 的 slow / slowCnt 均为 0，且前者过重）。
-     * 入参 { start, end, interval, serviceNames, limit }，返回 [{ service, value }]，
-     * value = 该服务跨协议 slow 列求和后的慢调用总数（已过滤 <=0、按 value 降序、按 limit 截断）。
-     */
-    public List<Map<String, Object>> slowRanking(Map<String, Object> body) {
-        Window window = parseWindow(body);
-        List<String> serviceNames = parseStringList(body.get("serviceNames"));
-        int limit = toInt(body.get("limit"), 10);
-        if (limit <= 0) {
-            // limit<=0 表示不截断（如 KPI 总数需全量服务求和）
-            limit = TOP_GROUP_LIMIT;
-        }
-        List<String> slowMetrics = List.of(
-                "service.http.slow", "service.rpc.slow", "service.db.slow",
-                "service.redis.slow", "service.mq.slow", "service.remote.slow");
-        Map<String, Double> totals = new LinkedHashMap<>();
-        for (String metric : slowMetrics) {
-            for (Map<String, Object> raw : metricChart(metric, "sum", serviceNames, "service", null, window.startSec(), window.endSec(), window.interval())) {
-                Map<String, Object> tags = tagMap(raw);
-                String service = stringValue(tags.get("service"));
-                if (service.isEmpty()) {
-                    service = stringValue(tags.get("serviceId"));
-                }
-                List<TrendPoint> points = readPoints(raw);
-                if (service.isEmpty() || points.isEmpty()) {
-                    continue;
-                }
-                totals.merge(service, sumPoints(points), Double::sum);
-            }
-        }
-        List<Map<String, Object>> rows = new ArrayList<>();
-        for (Map.Entry<String, Double> entry : totals.entrySet()) {
-            if (entry.getValue() <= 0) {
-                continue;
-            }
-            Map<String, Object> row = new LinkedHashMap<>();
-            row.put("service", entry.getKey());
-            row.put("value", entry.getValue());
-            rows.add(row);
-        }
-        rows.sort((a, b) -> Double.compare(doubleOf(b.get("value")), doubleOf(a.get("value"))));
-        return rows.size() > limit ? new ArrayList<>(rows.subList(0, limit)) : rows;
-    }
-
     // ---------- 内部工具 ----------
 
     private double aggregate(MetricItem item, List<String> serviceNames, Window window, long startSec, long endSec) {
+        // sum 语义（只要一个窗口总数）：直接对目标表条件聚合，跳过"按时间桶分组出序列、Java 再求和"
+        if ("sum".equalsIgnoreCase(item.aggs())) {
+            return directTotal(item, serviceNames, startSec, endSec);
+        }
+        // avg 语义（如错误率）依赖分桶均值，保留原序列路径
         Merged merged = mergedSeries(item, serviceNames, window, startSec, endSec);
         return aggregatePoints(merged.points(), item.aggs());
     }
 
+    /**
+     * sum 语义的窗口总量：SELECT SUM(field) ... WHERE ts 范围 + 标签过滤，单行结果。
+     * 有服务筛选时下推 service IN；单服务未命中任何行时回退 service_id / serviceCode
+     * （与 mergedSeries 的回退口径一致，OTLP 指标常以 *_id 归档）。
+     */
+    private double directTotal(MetricItem item, List<String> serviceNames, long startSec, long endSec) {
+        List<Map<String, Object>> base = item.filters() == null ? List.of() : item.filters();
+        List<List<Map<String, Object>>> variants = new ArrayList<>();
+        List<Map<String, Object>> byName = new ArrayList<>(base);
+        if (!serviceNames.isEmpty()) {
+            byName.add(Map.of("left", "service", "operator", "in", "right", serviceNames, "connector", "AND"));
+        }
+        variants.add(byName);
+        if (serviceNames.size() == 1) {
+            List<String> ids = List.of(com.databuff.apm.common.util.PortalServiceIdResolver.normalize(serviceNames.get(0)));
+            List<Map<String, Object>> byId = new ArrayList<>(base);
+            byId.add(Map.of("left", "service_id", "operator", "in", "right", ids, "connector", "AND"));
+            variants.add(byId);
+            List<Map<String, Object>> byCode = new ArrayList<>(base);
+            byCode.add(Map.of("left", "serviceCode", "operator", "in", "right", serviceNames, "connector", "AND"));
+            variants.add(byCode);
+        }
+        for (List<Map<String, Object>> filters : variants) {
+            Map<String, Object> queryA = new LinkedHashMap<>();
+            queryA.put("metric", item.metric());
+            if (!filters.isEmpty()) {
+                queryA.put("from", filters);
+            }
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("start", startSec);
+            body.put("end", endSec);
+            body.put("query", Map.of("A", queryA));
+            ApmQueryModels.MetricTotalSnapshot snapshot = metricQueryService.metricTotal(body);
+            if (snapshot.matchedRows() > 0) {
+                return snapshot.total();
+            }
+            log.info("directTotal no rows, try next variant metric={} serviceNames={}", item.metric(), serviceNames);
+        }
+        return 0;
+    }
+
     private Merged mergedSeries(MetricItem item, List<String> serviceNames, Window window, long startSec, long endSec) {
-        List<Map<String, Object>> series = metricChart(item.metric(), item.aggs(), serviceNames, null, null, startSec, endSec, window.interval());
+        List<Map<String, Object>> series = metricChart(item.metric(), item.aggs(), serviceNames, null, null, startSec, endSec, window.interval(), TOP_GROUP_LIMIT, item.filters());
         TreeMap<Long, Double> buckets = new TreeMap<>();
         String unit = "";
         for (Map<String, Object> raw : series) {
@@ -308,7 +311,7 @@ public class CockpitMetricPortalService {
         // 单服务且首轮无有效点位，回退尝试 service_id/serviceCode 维度
         if (buckets.isEmpty() && serviceNames.size() == 1) {
             log.info("mergedSeries empty for service={} metric={}, retry with service_id/serviceCode", serviceNames, item.metric());
-            List<Map<String, Object>> retrySeries = metricChartByServiceId(item.metric(), item.aggs(), serviceNames, startSec, endSec, window.interval());
+            List<Map<String, Object>> retrySeries = metricChartByServiceId(item.metric(), item.aggs(), serviceNames, startSec, endSec, window.interval(), item.filters());
             buckets.clear();
             unit = "";
             for (Map<String, Object> raw : retrySeries) {
@@ -332,13 +335,17 @@ public class CockpitMetricPortalService {
     }
 
     /** 单服务回退：按 service_id/srcServiceId IN 查询（OTLP 指标常以 *_id 归档） */
-    private List<Map<String, Object>> metricChartByServiceId(String metric, String aggs, List<String> serviceNames, long startSec, long endSec, int interval) {
+    private List<Map<String, Object>> metricChartByServiceId(String metric, String aggs, List<String> serviceNames, long startSec, long endSec, int interval, List<Map<String, Object>> filters) {
         if (metric.isEmpty() || serviceNames.isEmpty()) return List.of();
         List<String> normalizedIds = serviceNames.stream().map(s -> com.databuff.apm.common.util.PortalServiceIdResolver.normalize(s)).toList();
         boolean isDep = isDependencyMetric(metric);
         String idColumn = isDep ? "srcServiceId" : "service_id";
         String byColumn = isDep ? "srcServiceId" : "service_id";
-        List<Map<String, Object>> fromId = List.of(Map.of("left", idColumn, "operator", "in", "right", normalizedIds, "connector", "AND"));
+        List<Map<String, Object>> fromId = new ArrayList<>();
+        if (filters != null) {
+            fromId.addAll(filters);
+        }
+        fromId.add(Map.of("left", idColumn, "operator", "in", "right", normalizedIds, "connector", "AND"));
         List<String> byId = List.of(byColumn);
         Map<String, Object> queryA = new LinkedHashMap<>();
         queryA.put("metric", metric);
@@ -359,7 +366,11 @@ public class CockpitMetricPortalService {
         // 再尝试 serviceCode/srcService
         String codeColumn = isDep ? "srcService" : "serviceCode";
         String byCode = isDep ? "srcService" : "serviceCode";
-        List<Map<String, Object>> fromCode = List.of(Map.of("left", codeColumn, "operator", "in", "right", isDep ? serviceNames : serviceNames, "connector", "AND"));
+        List<Map<String, Object>> fromCode = new ArrayList<>();
+        if (filters != null) {
+            fromCode.addAll(filters);
+        }
+        fromCode.add(Map.of("left", codeColumn, "operator", "in", "right", serviceNames, "connector", "AND"));
         List<String> byCodeList = List.of(byCode);
         queryA.put("from", fromCode);
         queryA.put("by", byCodeList);
@@ -373,33 +384,32 @@ public class CockpitMetricPortalService {
         return r2;
     }
 
+    private static boolean isDependencyMetric(String metric) {
+        return metric != null && (metric.startsWith("service.db") || metric.startsWith("service.redis") || metric.startsWith("service.mq") || metric.startsWith("service.remote") || metric.startsWith("service.config"));
+    }
+
     /**
      * 调用 MetricQueryService.metricChart（入参已构造成 query.A 形态）。
      * serviceName 非空：过滤该服务并按 groupBy 分组；
      * groupBy 非空（如 service 排行）：按 groupBy 分组，serviceNames 非空时附加 IN 过滤；
      * 否则（趋势/KPI）：serviceNames 非空时按 service 分组 + IN 过滤，无筛选时返回全局单条。
+     * filters 为额外的标签过滤（DSL from 形态：{left, operator, right, connector}），
+     * 如慢调用口径 durationRange='3000ms+'，会原样下推到 SQL WHERE。
      */
     private List<Map<String, Object>> metricChart(
             String metric, String aggs, List<String> serviceNames,
             String groupBy, String serviceName,
-            long startSec, long endSec, int interval) {
-        return metricChart(metric, aggs, serviceNames, groupBy, serviceName, startSec, endSec, interval, TOP_GROUP_LIMIT);
-    }
-
-    private static boolean isDependencyMetric(String metric) {
-        return metric != null && (metric.startsWith("service.db") || metric.startsWith("service.redis") || metric.startsWith("service.mq") || metric.startsWith("service.remote") || metric.startsWith("service.config"));
-    }
-
-    private List<Map<String, Object>> metricChart(
-            String metric, String aggs, List<String> serviceNames,
-            String groupBy, String serviceName,
-            long startSec, long endSec, int interval, int limit) {
+            long startSec, long endSec, int interval, int limit,
+            List<Map<String, Object>> filters) {
         if (metric.isEmpty()) {
             return List.of();
         }
         // 依赖调用类指标归属 srcService（调用方），其余归属 service
         String filterColumn = isDependencyMetric(metric) ? "srcService" : "service";
         List<Map<String, Object>> from = new ArrayList<>();
+        if (filters != null && !filters.isEmpty()) {
+            from.addAll(filters);
+        }
         List<String> by = new ArrayList<>();
         if (serviceName != null && !serviceName.isEmpty()) {
             from.add(Map.of("left", filterColumn, "operator", "=", "right", serviceName, "connector", "AND"));
@@ -515,12 +525,34 @@ public class CockpitMetricPortalService {
                         items.add(new MetricItem(
                                 stringValue(map.get("key")),
                                 metric,
-                                stringValue(map.get("aggs"))));
+                                stringValue(map.get("aggs")),
+                                parseFilters(map.get("filters"))));
                     }
                 }
             }
         }
         return items;
+    }
+
+    /**
+     * 解析标签过滤条件（DSL from 形态：{left, operator, right, connector}），
+     * operator/connector 缺省分别为 = / AND，与 MetricQueryService.parseFilters 口径一致。
+     */
+    private static List<Map<String, Object>> parseFilters(Object value) {
+        List<Map<String, Object>> filters = new ArrayList<>();
+        if (value instanceof List<?> list) {
+            for (Object entry : list) {
+                if (entry instanceof Map<?, ?> map && map.get("left") != null && map.get("right") != null) {
+                    Map<String, Object> filter = new LinkedHashMap<>();
+                    filter.put("left", String.valueOf(map.get("left")));
+                    filter.put("operator", map.get("operator") == null ? "=" : String.valueOf(map.get("operator")));
+                    filter.put("right", map.get("right"));
+                    filter.put("connector", map.get("connector") == null ? "AND" : String.valueOf(map.get("connector")));
+                    filters.add(filter);
+                }
+            }
+        }
+        return filters;
     }
 
     private static List<String> parseStringList(Object value) {

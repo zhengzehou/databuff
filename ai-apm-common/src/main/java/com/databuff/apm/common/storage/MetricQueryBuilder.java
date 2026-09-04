@@ -3835,6 +3835,32 @@ public final class MetricQueryBuilder {
                 extraFilters == null ? "" : extraFilters);
     }
 
+    /**
+     * 无分桶窗口聚合：对目标表按条件直接 SUM 出一个总数，不按时间桶 GROUP BY。
+     * 供只需窗口总量的场景（如 KPI 汇总），与"分桶求序列后 Java 再求和"结果等价但省去分组开销。
+     * matched_rows 用于区分"窗口内无数据"与"真实 0 值"。
+     */
+    public static String metricFieldTotalSql(
+            String database,
+            String table,
+            String fieldColumn,
+            long fromMillis,
+            long toMillis,
+            String extraFilters) {
+        String column = MetricIdentifierParser.toFieldColumnName(fieldColumn);
+        return """
+                SELECT SUM(`%s`) AS metric_total, COUNT(*) AS matched_rows
+                FROM %s.`%s`
+                WHERE %s
+                %s
+                """.formatted(
+                column,
+                database,
+                table,
+                metricTsWhere(fromMillis, toMillis),
+                extraFilters == null ? "" : extraFilters);
+    }
+
     public static String metricAvgDurationScalarSql(
             String database,
             String table,

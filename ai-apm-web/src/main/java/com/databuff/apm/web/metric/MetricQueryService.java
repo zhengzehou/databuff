@@ -1,5 +1,6 @@
 package com.databuff.apm.web.metric;
 
+import com.databuff.apm.common.query.ApmQueryModels;
 import com.databuff.apm.common.query.ApmQueryModels.HttpEndpointPoint;
 import com.databuff.apm.common.query.ApmQueryModels.HttpLatencyBucketPoint;
 import com.databuff.apm.common.query.ApmQueryModels.MetricSeriesPoint;
@@ -244,6 +245,44 @@ public class MetricQueryService {
         } catch (Exception e) {
             log.error("metricChart error metric={} by={} filter={}", body.get("query"), e.getMessage(), e);
             return List.of();
+        }
+    }
+
+    /**
+     * 无分桶窗口聚合：对目标表按条件直接 SUM 出窗口总量，返回 { total, matchedRows }。
+     * 供只需一个总数的场景（如 KPI 汇总），与 metricChart 出序列后再求和等价，
+     * 但省去按时间桶 GROUP BY 和序列回传的开销。入参同 metricChart 的 query.A（metric/from）。
+     * matchedRows=0 表示窗口内无数据行（区别于真实 0 值），供上层做 service_id 回退重试。
+     */
+    public ApmQueryModels.MetricTotalSnapshot metricTotal(Map<String, Object> body) {
+        try {
+            Map<String, Object> queryRoot = body.get("query") instanceof Map<?, ?> queryMap
+                    ? (Map<String, Object>) queryMap
+                    : Map.of();
+            Map<String, Object> metricQuery = queryRoot.get("A") instanceof Map<?, ?> aMap
+                    ? (Map<String, Object>) aMap
+                    : Map.of();
+            String metric = String.valueOf(metricQuery.getOrDefault("metric", ""));
+            if (metric.isBlank()) {
+                return new ApmQueryModels.MetricTotalSnapshot(0, 0);
+            }
+            long start = normalizeTime(toLong(body.get("start")));
+            long end = normalizeTime(toLong(body.get("end")));
+            List<MetricFilter> filters = parseFilters(metricQuery.get("from"));
+
+            MetricIdentifierParser.ParsedMetric parsed = MetricIdentifierParser.parse(metric);
+            String table = MetricIdentifierParser.dorisTableName(parsed.measurement());
+            String filterClause = buildFilterClause(filters);
+            String fieldColumn = MetricIdentifierParser.toDorisFieldColumn(parsed);
+            String sql = MetricQueryBuilder.metricFieldTotalSql(
+                    metricDatabase, table, fieldColumn, toMillis(start), toMillis(end), filterClause);
+            log.info("metricTotal metric={} table={} fieldColumn={} sql={}", metric, table, fieldColumn, sql);
+            ApmQueryModels.MetricTotalSnapshot snapshot = readRepository.queryMetricTotal(sql);
+            log.info("metricTotal metric={} total={} matchedRows={}", metric, snapshot.total(), snapshot.matchedRows());
+            return snapshot;
+        } catch (Exception e) {
+            log.error("metricTotal error metric={}", body.get("query"), e.getMessage(), e);
+            return new ApmQueryModels.MetricTotalSnapshot(0, 0);
         }
     }
 
