@@ -1,6 +1,7 @@
 package com.databuff.apm.web.portal;
 
 import com.databuff.apm.common.query.ApmQueryModels;
+import com.databuff.apm.web.cockpit.TrafficLightService;
 import com.databuff.apm.web.metric.MetricQueryService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,12 +28,14 @@ public class CockpitMetricPortalService {
     private static final Logger log = LoggerFactory.getLogger(CockpitMetricPortalService.class);
 
     private final MetricQueryService metricQueryService;
+    private final TrafficLightService trafficLightService;
 
     /** 分组查询的分组数上限（与前端旧 TOP_GROUP_LIMIT 一致）。 */
     private static final int TOP_GROUP_LIMIT = 200;
 
-    public CockpitMetricPortalService(MetricQueryService metricQueryService) {
+    public CockpitMetricPortalService(MetricQueryService metricQueryService, TrafficLightService trafficLightService) {
         this.metricQueryService = metricQueryService;
+        this.trafficLightService = trafficLightService;
     }
 
     /** 查询窗口：start/end 为秒级时间戳（metricChart 内部归一化为毫秒）。 */
@@ -261,7 +264,8 @@ public class CockpitMetricPortalService {
      * （与 mergedSeries 的回退口径一致，OTLP 指标常以 *_id 归档）。
      */
     private double directTotal(MetricItem item, List<String> serviceNames, long startSec, long endSec) {
-        List<Map<String, Object>> base = item.filters() == null ? List.of() : item.filters();
+        List<Map<String, Object>> base = applySlowExclusions(
+                item.filters() == null ? List.of() : item.filters());
         List<List<Map<String, Object>>> variants = new ArrayList<>();
         List<Map<String, Object>> byName = new ArrayList<>(base);
         if (!serviceNames.isEmpty()) {
@@ -337,6 +341,7 @@ public class CockpitMetricPortalService {
     /** 单服务回退：按 service_id/srcServiceId IN 查询（OTLP 指标常以 *_id 归档） */
     private List<Map<String, Object>> metricChartByServiceId(String metric, String aggs, List<String> serviceNames, long startSec, long endSec, int interval, List<Map<String, Object>> filters) {
         if (metric.isEmpty() || serviceNames.isEmpty()) return List.of();
+        filters = applySlowExclusions(filters);
         List<String> normalizedIds = serviceNames.stream().map(s -> com.databuff.apm.common.util.PortalServiceIdResolver.normalize(s)).toList();
         boolean isDep = isDependencyMetric(metric);
         String idColumn = isDep ? "srcServiceId" : "service_id";
@@ -404,6 +409,7 @@ public class CockpitMetricPortalService {
         if (metric.isEmpty()) {
             return List.of();
         }
+        filters = applySlowExclusions(filters);
         // 依赖调用类指标归属 srcService（调用方），其余归属 service
         String filterColumn = isDependencyMetric(metric) ? "srcService" : "service";
         List<Map<String, Object>> from = new ArrayList<>();
@@ -532,6 +538,25 @@ public class CockpitMetricPortalService {
             }
         }
         return items;
+    }
+
+    /**
+     * 慢调用统计排除长连接服务：查询带 durationRange 过滤即视为慢调用口径，
+     * 追加 traffic-light 配置的长连接服务列表为 service NOT IN 过滤（与异常服务统计共用同一配置）。
+     */
+    private List<Map<String, Object>> applySlowExclusions(List<Map<String, Object>> filters) {
+        boolean slowQuery = filters != null && filters.stream()
+                .anyMatch(f -> "durationRange".equals(String.valueOf(f.get("left"))));
+        if (!slowQuery) {
+            return filters;
+        }
+        List<String> excluded = trafficLightService.longConnServices();
+        if (excluded.isEmpty()) {
+            return filters;
+        }
+        List<Map<String, Object>> merged = new ArrayList<>(filters);
+        merged.add(Map.of("left", "service", "operator", "NOT IN", "right", excluded, "connector", "AND"));
+        return merged;
     }
 
     /**

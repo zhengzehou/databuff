@@ -1,6 +1,7 @@
 package com.databuff.apm.web.portal;
 
 import com.databuff.apm.web.cockpit.TrafficLightService;
+import com.databuff.apm.web.persistence.TrafficLightConfigPersistence;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -18,14 +19,17 @@ public class CockpitPortalController {
     private final CockpitPortalService cockpitPortalService;
     private final TrafficLightService trafficLightService;
     private final CockpitMetricPortalService cockpitMetricService;
+    private final TrafficLightConfigPersistence trafficLightConfigPersistence;
 
     public CockpitPortalController(
             CockpitPortalService cockpitPortalService,
             TrafficLightService trafficLightService,
-            CockpitMetricPortalService cockpitMetricService) {
+            CockpitMetricPortalService cockpitMetricService,
+            TrafficLightConfigPersistence trafficLightConfigPersistence) {
         this.cockpitPortalService = cockpitPortalService;
         this.trafficLightService = trafficLightService;
         this.cockpitMetricService = cockpitMetricService;
+        this.trafficLightConfigPersistence = trafficLightConfigPersistence;
     }
 
     @PostMapping("/trafficLight")
@@ -96,6 +100,8 @@ public class CockpitPortalController {
             }
         }
         trafficLightService.setConfig(updates);
+        // 持久化到配置库（此前 portal 路径缺失，配置重启即丢失）
+        trafficLightConfigPersistence.persist(updates);
         return portalEnvelope(buildHealthConfigView(resolvedType));
     }
 

@@ -47,6 +47,8 @@ public class CockpitPortalService {
         int limit = ServicePortalService.intValue(config.get("showServiceNumber"), 20);
 
         Map<String, Map<String, Object>> serviceInfoById = loadServiceInfoById(body, from, to);
+        // 长连接服务配置排除：故障排查页的红绿灯/告警排序不统计这些服务
+        excludeLongConnServices(serviceInfoById);
         if (serviceInfoById.isEmpty()) {
             return List.of();
         }
@@ -628,6 +630,20 @@ public class CockpitPortalService {
             serviceInfoById.putIfAbsent(serviceId, row);
         }
         return serviceInfoById;
+    }
+
+    /** 按 traffic-light 的长连接服务配置剔除服务（服务名、展示名、归一 id 均参与匹配）。 */
+    private void excludeLongConnServices(Map<String, Map<String, Object>> serviceInfoById) {
+        Set<String> excludedSet = trafficLightService.longConnServiceSet();
+        if (excludedSet.isEmpty()) {
+            return;
+        }
+        serviceInfoById.entrySet().removeIf(entry -> {
+            Map<String, Object> row = entry.getValue();
+            String service = ServicePortalService.stringValue(row.get("service"), "");
+            String name = ServicePortalService.stringValue(row.get("name"), "");
+            return excludedSet.contains(service) || excludedSet.contains(name) || excludedSet.contains(entry.getKey());
+        });
     }
 
     private static String canonicalServiceId(Map<String, Object> row) {

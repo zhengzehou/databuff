@@ -9,6 +9,7 @@ import com.databuff.apm.web.monitor.eval.EventRulePayloadParser;
 import com.databuff.apm.web.config.ApmStorageProperties;
 import com.databuff.apm.web.metric.MetricCoreCatalogService;
 import com.databuff.apm.web.metric.MetricQueryService;
+import com.databuff.apm.web.cockpit.TrafficLightService;
 import com.databuff.apm.web.portal.PortalTimeParser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,14 +31,17 @@ public class RuleMetricEvaluationService {
     private final ApmReadRepository readRepository;
     private final String metricDatabase;
     private final MetricCoreCatalogService catalogService;
+    private final TrafficLightService trafficLightService;
 
     public RuleMetricEvaluationService(
             ApmReadRepository readRepository,
             ApmStorageProperties storageProperties,
-            MetricCoreCatalogService catalogService) {
+            MetricCoreCatalogService catalogService,
+            TrafficLightService trafficLightService) {
         this.readRepository = readRepository;
         this.metricDatabase = storageProperties.metricDatabase();
         this.catalogService = catalogService;
+        this.trafficLightService = trafficLightService;
     }
 
     public double evaluateRule(EventRule rule, long lookbackMillis) {
@@ -76,7 +80,7 @@ public class RuleMetricEvaluationService {
             if ("*".equals(service)) {
                 service = rule.service();
             }
-            return List.of(new GroupMetricValue(service, service, value));
+            return excludeLongConnGroups(metricId, List.of(new GroupMetricValue(service, service, value)));
         }
         String groupBy = groupByFields.get(0);
         try {
@@ -114,11 +118,29 @@ public class RuleMetricEvaluationService {
                 String service = resolveEvaluatedService(groupByFields, groupBy, groupValue, rule.service());
                 results.add(new GroupMetricValue(service, groupValue, value));
             }
-            return results;
+            return excludeLongConnGroups(metricId, results);
         } catch (Exception e) {
             log.debug("grouped metric evaluation failed for rule {}: {}", rule.id(), e.toString());
             return List.of();
         }
+    }
+
+    /**
+     * 慢/耗时口径（*.avgDuration）按 traffic-light 的长连接服务配置排除分组：
+     * 这些服务不参与耗时告警评估，从源头避免天然长耗时（IM/监控轮询等）触发告警。
+     * 仅对耗时类指标生效，错误率/异常数告警不受影响。
+     */
+    private List<GroupMetricValue> excludeLongConnGroups(String metricId, List<GroupMetricValue> results) {
+        if (!metricId.endsWith(".avgDuration")) {
+            return results;
+        }
+        java.util.Set<String> excludedSet = trafficLightService.longConnServiceSet();
+        if (excludedSet.isEmpty()) {
+            return results;
+        }
+        return results.stream()
+                .filter(group -> group.groupKey() == null || !excludedSet.contains(group.groupKey()))
+                .toList();
     }
 
     public double scalarValue(String metricId, List<MetricQueryService.MetricFilter> filters, long from, long to) {

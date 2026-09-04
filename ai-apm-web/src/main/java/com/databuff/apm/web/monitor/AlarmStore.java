@@ -50,7 +50,7 @@ public class AlarmStore {
         return open(service, detectionWay, level, message, at, Alarm.STATUS_RESOLVED, at);
     }
 
-    private Alarm open(
+    private synchronized Alarm open(
             String service,
             String detectionWay,
             String level,
@@ -77,7 +77,7 @@ public class AlarmStore {
         return event;
     }
 
-    public Optional<Alarm> resolveById(String id) {
+    public synchronized Optional<Alarm> resolveById(String id) {
         Alarm open = events.get(id);
         if (open == null || !Alarm.STATUS_OPEN.equals(open.status())) {
             return Optional.empty();
@@ -86,7 +86,7 @@ public class AlarmStore {
         return Optional.of(resolved);
     }
 
-    public void resolveAllOpenByServiceAndDetectionWay(String service, String detectionWay) {
+    public synchronized void resolveAllOpenByServiceAndDetectionWay(String service, String detectionWay) {
         String way = EventRulePayloadParser.normalizeWay(detectionWay);
         events.values().stream()
                 .filter(event -> Alarm.STATUS_OPEN.equals(event.status()))
@@ -95,7 +95,7 @@ public class AlarmStore {
                 .forEach(alarm -> resolveAlarm(alarm, Instant.now()));
     }
 
-    private Alarm resolveAlarm(Alarm open, Instant at) {
+    private synchronized Alarm resolveAlarm(Alarm open, Instant at) {
         Instant resolvedAt = at == null ? Instant.now() : at;
         Alarm resolved = open.resolve(resolvedAt);
         events.put(open.id(), resolved);
@@ -103,27 +103,27 @@ public class AlarmStore {
         return resolved;
     }
 
-    public Optional<Alarm> findOpenByService(String service) {
+    public synchronized Optional<Alarm> findOpenByService(String service) {
         return events.values().stream()
                 .filter(event -> Alarm.STATUS_OPEN.equals(event.status()))
                 .filter(event -> service != null && service.equals(event.service()))
                 .findFirst();
     }
 
-    public List<Alarm> listOpenByService(String service) {
+    public synchronized List<Alarm> listOpenByService(String service) {
         return events.values().stream()
                 .filter(event -> Alarm.STATUS_OPEN.equals(event.status()))
                 .filter(event -> service != null && service.equals(event.service()))
                 .toList();
     }
 
-    public List<Alarm> listOpen() {
+    public synchronized List<Alarm> listOpen() {
         return events.values().stream()
                 .filter(event -> Alarm.STATUS_OPEN.equals(event.status()))
                 .toList();
     }
 
-    public Optional<Alarm> findLastResolvedByService(String service, long withinMillis) {
+    public synchronized Optional<Alarm> findLastResolvedByService(String service, long withinMillis) {
         Instant cutoff = Instant.now().minusMillis(withinMillis);
         return events.values().stream()
                 .filter(event -> Alarm.STATUS_RESOLVED.equals(event.status()))
@@ -132,7 +132,7 @@ public class AlarmStore {
                 .max(Comparator.comparing(Alarm::resolvedAt));
     }
 
-    public List<AlarmIncident> groupOpenIncidents() {
+    public synchronized List<AlarmIncident> groupOpenIncidents() {
         Map<String, List<Alarm>> grouped = events.values().stream()
                 .filter(event -> Alarm.STATUS_OPEN.equals(event.status()))
                 .collect(Collectors.groupingBy(
@@ -145,14 +145,14 @@ public class AlarmStore {
                 .toList();
     }
 
-    public List<Alarm> listRecent(int limit) {
+    public synchronized List<Alarm> listRecent(int limit) {
         return events.values().stream()
                 .sorted(Comparator.comparing(Alarm::triggeredAt).reversed())
                 .limit(Math.max(1, limit))
                 .toList();
     }
 
-    public List<Alarm> listInTimeRange(Instant from, Instant to) {
+    public synchronized List<Alarm> listInTimeRange(Instant from, Instant to) {
         if (from == null || to == null) {
             return List.of();
         }
@@ -165,23 +165,23 @@ public class AlarmStore {
                 .toList();
     }
 
-    public Optional<Alarm> findById(String id) {
+    public synchronized Optional<Alarm> findById(String id) {
         if (id == null || id.isBlank()) {
             return Optional.empty();
         }
         return Optional.ofNullable(events.get(id));
     }
 
-    public void clear() {
+    public synchronized void clear() {
         events.clear();
     }
 
-    public void replaceAll(List<Alarm> loaded) {
+    public synchronized void replaceAll(List<Alarm> loaded) {
         events.clear();
         loaded.forEach(event -> events.put(event.id(), event));
     }
 
-    public void persistExisting(Alarm event) {
+    public synchronized void persistExisting(Alarm event) {
         events.put(event.id(), event);
         ifAvailable(sync -> sync.persist(event));
     }

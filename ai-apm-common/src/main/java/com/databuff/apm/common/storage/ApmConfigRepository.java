@@ -889,6 +889,16 @@ public class ApmConfigRepository {
     private static final int ALARM_EVENT_BATCH_SIZE = 500;
 
     public Map<String, List<EventRow>> listEventsByAlarmIds(Collection<String> alarmIds, String status) throws SQLException {
+        return listEventsByAlarmIds(alarmIds, status, List.of());
+    }
+
+    /**
+     * 批量查询告警关联的触发事件。
+     * excludedServices：需要排除的服务列表（如长连接服务配置），其事件不参与返回
+     * （SQL 层 e.service NOT IN 下推，空列表表示不排除）。
+     */
+    public Map<String, List<EventRow>> listEventsByAlarmIds(
+            Collection<String> alarmIds, String status, Collection<String> excludedServices) throws SQLException {
         if (alarmIds == null || alarmIds.isEmpty()) {
             return Map.of();
         }
@@ -899,22 +909,24 @@ public class ApmConfigRepository {
         if (ids.isEmpty()) {
             return Map.of();
         }
+        List<String> excluded = excludedServices == null
+                ? List.of()
+                : excludedServices.stream().filter(s -> s != null && !s.isBlank()).distinct().toList();
         Map<String, List<EventRow>> grouped = new LinkedHashMap<>();
         for (int offset = 0; offset < ids.size(); offset += ALARM_EVENT_BATCH_SIZE) {
             List<String> batch = ids.subList(offset, Math.min(offset + ALARM_EVENT_BATCH_SIZE, ids.size()));
-            String placeholders = String.join(",", java.util.Collections.nCopies(batch.size(), "?"));
-            String sql = "SELECT rel.alarm_id, e.id, e.rule_id, e.rule_name, e.service, e.detection_way, e.level, e.status, e.message, e.group_key, e.silenced, e.triggered_at "
-                    + "FROM " + qualified(DorisTableNames.CONFIG_ALARM_EVENT) + " rel "
-                    + "INNER JOIN " + qualified(DorisTableNames.CONFIG_EVENT) + " e ON rel.event_id = e.id "
-                    + "WHERE rel.alarm_id IN (" + placeholders + ") AND e.status = ? "
-                    + "ORDER BY rel.alarm_id, e.triggered_at DESC";
+            // SQL 文本统一由 MetricQueryBuilder 生成（含长连接服务 NOT IN 排除子句），此处只做参数绑定
+            String sql = MetricQueryBuilder.alarmLinkedEventsSql(database, batch.size(), excluded.size());
             try (Connection connection = reader.connection();
                  PreparedStatement ps = connection.prepareStatement(sql)) {
                 int index = 1;
                 for (String alarmId : batch) {
                     ps.setString(index++, alarmId);
                 }
-                ps.setString(index, status);
+                ps.setString(index++, status);
+                for (String service : excluded) {
+                    ps.setString(index++, service);
+                }
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
                         String alarmId = rs.getString(1);

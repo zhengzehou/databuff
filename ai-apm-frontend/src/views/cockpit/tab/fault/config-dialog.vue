@@ -53,6 +53,18 @@
           <span class="font-13 default-text">{{ $t('modules.views.observe.scene.s_0d98c747') }}</span>
         </div>
       </el-form-item>
+
+      <div class="font-14 lh-22 fw-500 mb-10">长连接服务</div>
+      <el-form-item label="服务列表" :show-message="false" class="mb-20">
+        <el-input
+          v-model="settingForm.longConnServices"
+          type="textarea" :rows="3"
+          placeholder="逗号分隔，如：livechat-im-server,cloudsearch6-control-monitorservice"
+          class="long-conn-input" />
+        <div class="font-12" style="color:var(--color-text-secondary);line-height:18px;">
+          配置的服务不参与异常服务数与慢调用统计（适用于 IM、监控轮询等天然长耗时服务）
+        </div>
+      </el-form-item>
     </el-form>
 
     <div class="drawer-footer pt-12">
@@ -117,12 +129,13 @@ export default class ConfigDialog extends Vue {
     showServiceNumber: FAULT_HEALTH_DEFAULTS.showServiceNumber,
     red: FAULT_HEALTH_DEFAULTS.alarm.red,
     yellow: FAULT_HEALTH_DEFAULTS.alarm.yellow,
+    longConnServices: '',
   }
   get settingRules () {
     return {
       showServiceNumber: { required: true, trigger: 'blur', message: i18n.t('modules.views.cockpit.tab.s_cd942f1c') as string, messageKey: 'modules.views.cockpit.tab.s_cd942f1c', type: 'number' },
-      red: { required: true, trigger: 'blur', message: i18n.t('modules.views.cockpit.tab.s_3bc03e0c') as string, messageKey: 'modules.views.cockpit.tab.s_3bc03e0c' },
-      yellow: { required: true, trigger: 'blur', message: i18n.t('modules.views.cockpit.tab.s_3bc03e0c') as string, messageKey: 'modules.views.cockpit.tab.s_3bc03e0c' },
+      red: { required: true, trigger: 'blur', message: i18n.t('modules.views.cockpit.tab.s_3bc03e0c') as string, messageKey: 'modules.views.cockpit.tab.s_3bc03e0c', type: 'number' },
+      yellow: { required: true, trigger: 'blur', message: i18n.t('modules.views.cockpit.tab.s_3bc03e0c') as string, messageKey: 'modules.views.cockpit.tab.s_3bc03e0c', type: 'number' },
     }
   }
 
@@ -130,6 +143,8 @@ export default class ConfigDialog extends Vue {
     const defaults = this.defaultThresholds
     const typeCfg = this.config[this.type]
     this.settingForm.showServiceNumber = this.config.showServiceNumber ?? FAULT_HEALTH_DEFAULTS.showServiceNumber
+    const longConn = this.config.longConnServices
+    this.settingForm.longConnServices = Array.isArray(longConn) ? longConn.join(',') : (longConn || '')
     if (typeCfg && typeCfg.red != null && typeCfg.yellow != null) {
       this.settingForm.red = typeCfg.red
       this.settingForm.yellow = typeCfg.yellow
@@ -143,12 +158,16 @@ export default class ConfigDialog extends Vue {
   }
 
   private saveHandle () {
+    // 阈值在 validate 前归一为数字：initForm 从配置读回的是 number，规则按 number 校验，
+    // 否则 async-validator 报 "red is not a string" 并静默拦截保存
+    this.settingForm.red = +this.settingForm.red || 0
+    this.settingForm.yellow = +this.settingForm.yellow || 0
     this.$refs.settingForm.validate(async (valid: boolean) => {
       if (valid) {
         const params = {
           ...this.settingForm,
-          red: +this.settingForm.red,
-          yellow: +this.settingForm.yellow,
+          longConnServices: (this.settingForm.longConnServices || '')
+            .split(/[,，]/).map((s: string) => s.trim()).filter(Boolean).join(','),
           type: this.type,
         }
         this.postLoading = true

@@ -2,6 +2,7 @@ package com.databuff.apm.web.persistence;
 
 import com.databuff.apm.common.storage.ApmConfigRepository;
 import com.databuff.apm.common.storage.ApmReadRepository;
+import com.databuff.apm.web.cockpit.TrafficLightService;
 import com.databuff.apm.web.config.ApmStorageProperties;
 import com.databuff.apm.web.monitor.Alarm;
 import com.databuff.apm.web.monitor.pipeline.EventRecord;
@@ -29,6 +30,7 @@ public class EventPersistence {
 
     private final ApmReadRepository readRepository;
     private final EventRecordFactory eventRecordFactory;
+    private final TrafficLightService trafficLightService;
     private final String configDatabase;
     private final ConcurrentLinkedDeque<EventRecord> recentEvents = new ConcurrentLinkedDeque<>();
     private volatile boolean persistenceEnabled;
@@ -37,9 +39,11 @@ public class EventPersistence {
     public EventPersistence(
             ApmReadRepository readRepository,
             EventRecordFactory eventRecordFactory,
+            TrafficLightService trafficLightService,
             ApmStorageProperties storageProperties) {
         this.readRepository = readRepository;
         this.eventRecordFactory = eventRecordFactory;
+        this.trafficLightService = trafficLightService;
         this.configDatabase = storageProperties.configDatabase();
     }
 
@@ -150,7 +154,7 @@ public class EventPersistence {
         }
         try {
             return new ApmConfigRepository(readRepository, configDatabase)
-                    .listEventsByAlarmIds(alarmIds, EventRecord.STATUS_TRIGGER);
+                    .listEventsByAlarmIds(alarmIds, EventRecord.STATUS_TRIGGER, trafficLightService.longConnServices());
         } catch (Exception e) {
             log.warn("Failed to batch list monitor events for alarms: {}", e.getMessage());
             return Map.of();

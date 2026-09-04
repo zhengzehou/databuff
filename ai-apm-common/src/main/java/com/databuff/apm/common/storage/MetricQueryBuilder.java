@@ -179,13 +179,22 @@ public final class MetricQueryBuilder {
      * 与 CockpitPortalService.trafficLightColor 保持一致：
      * 非 green = grey(total &lt; min 或 total &lt;= 0) 或 yellow/red(error/cnt &gt; 阈值/2)。
      * 替代 trafficLightSql 拉每服务每桶明细回 Java 判色再计数。
+     * excludedServices：配置的长连接服务，统计时不参与（NOT IN 下推）。
      */
     public static String unhealthyServiceTrendSql(
             String database,
             long fromMillis,
             long toMillis,
             double errorRateThreshold,
-            double minRequestCount) {
+            double minRequestCount,
+            List<String> excludedServices) {
+        String exclusion = "";
+        if (excludedServices != null && !excludedServices.isEmpty()) {
+            String joined = excludedServices.stream()
+                    .map(name -> "'" + escapeLiteral(name) + "'")
+                    .collect(java.util.stream.Collectors.joining(", "));
+            exclusion = " AND `service` NOT IN (" + joined + ") ";
+        }
         return """
                 SELECT ts_millis, COUNT(*) AS unhealthy_count
                 FROM (
@@ -200,13 +209,36 @@ public final class MetricQueryBuilder {
                 WHERE `total_cnt` < %s
                    OR `total_cnt` <= 0
                    OR `error_cnt` * 1.0 / NULLIF(`total_cnt`, 0) > %s / 2
+                   %s
                 GROUP BY ts_millis
                 ORDER BY ts_millis ASC
                 """.formatted(
                 database,
                 metricTsWhere(fromMillis, toMillis),
                 minRequestCount,
-                errorRateThreshold);
+                errorRateThreshold,
+                exclusion);
+    }
+
+    /**
+     * 告警关联触发事件查询（config_alarm_event ⋈ config_event）。
+     * 参数化占位符风格（与 ApmConfigRepository 一致，服务名等来自用户配置，绑定优于拼接）：
+     * 调用方按 alarmIds（alarmIdCount 个）→ status → excludedServices（excludedServiceCount 个）顺序绑定参数。
+     * excludedServiceCount &gt; 0 时生成 e.service NOT IN 排除子句（长连接服务配置）。
+     */
+    public static String alarmLinkedEventsSql(String configDatabase, int alarmIdCount, int excludedServiceCount) {
+        String alarmPlaceholders = String.join(",", java.util.Collections.nCopies(Math.max(1, alarmIdCount), "?"));
+        String exclusion = "";
+        if (excludedServiceCount > 0) {
+            String excludedPlaceholders = String.join(",", java.util.Collections.nCopies(excludedServiceCount, "?"));
+            exclusion = " AND e.service NOT IN (" + excludedPlaceholders + ") ";
+        }
+        return "SELECT rel.alarm_id, e.id, e.rule_id, e.rule_name, e.service, e.detection_way, e.level, e.status, e.message, e.group_key, e.silenced, e.triggered_at "
+                + "FROM " + configDatabase + "." + DorisTableNames.CONFIG_ALARM_EVENT + " rel "
+                + "INNER JOIN " + configDatabase + "." + DorisTableNames.CONFIG_EVENT + " e ON rel.event_id = e.id "
+                + "WHERE rel.alarm_id IN (" + alarmPlaceholders + ") AND e.status = ? "
+                + exclusion
+                + "ORDER BY rel.alarm_id, e.triggered_at DESC";
     }
 
     public static String spanListSql(String database, String service, long fromMillis, long toMillis, int limit) {
@@ -3937,16 +3969,22 @@ public final class MetricQueryBuilder {
     }
 
     /**
-     * IN 过滤：value 为集合时生成 IN 子句（多服务名等 OR 语义筛选场景）。
-     * String 入参仍走上面的单值分支。
+     * IN / NOT IN 过滤：value 为集合时生成对应子句（多服务名等筛选场景）。
+     * String 入参仍走上面的单值分支。NOT IN 集合为空时视为不排除（不生成子句）。
      */
     public static String metricFilterClause(String column, String operator, Object value) {
         if (!(value instanceof java.util.Collection<?> values)) {
             return metricFilterClause(column, operator, value == null ? "" : String.valueOf(value));
         }
+        String normalized = normalizeMetricFilterOperator(operator);
+        boolean notIn = "NOT IN".equals(normalized);
+        if (!notIn && !"IN".equals(normalized)) {
+            // 集合值配了非 IN 操作符：按首个元素退化单值比较，避免语义歧义
+            return metricFilterClause(column, operator, values.isEmpty() ? "" : String.valueOf(values.iterator().next()));
+        }
         String col = MetricIdentifierParser.toColumnName(column);
         if (values.isEmpty()) {
-            return " AND 1 = 0 ";
+            return notIn ? "" : " AND 1 = 0 ";
         }
         StringBuilder joined = new StringBuilder();
         for (Object v : values) {
@@ -3955,7 +3993,7 @@ public final class MetricQueryBuilder {
             }
             joined.append('\'').append(escapeLiteral(String.valueOf(v))).append('\'');
         }
-        return " AND `" + col + "` IN (" + joined + ") ";
+        return " AND `" + col + "` " + (notIn ? "NOT IN" : "IN") + " (" + joined + ") ";
     }
 
     private static String normalizeMetricFilterOperator(String operator) {
@@ -3966,6 +4004,8 @@ public final class MetricQueryBuilder {
             case "!=", "neq" -> "!=";
             case "like" -> "LIKE";
             case "notlike", "not_like", "not like" -> "NOT LIKE";
+            case "in" -> "IN";
+            case "notin", "not_in", "not in" -> "NOT IN";
             default -> "=";
         };
     }

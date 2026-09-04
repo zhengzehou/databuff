@@ -36,5 +36,9 @@ export const buildFaultStyleCfg = (data: Record<string, any> = {}) => {
     exception,
     red: data.red ?? current.red,
     yellow: data.yellow ?? current.yellow,
+    // 长连接服务列表：接口返回数组，本地回填 payload 为逗号串，统一归一为逗号串供编辑回显
+    longConnServices: Array.isArray(data.longConnServices)
+      ? data.longConnServices.join(',')
+      : (data.longConnServices ?? ''),
   };
 };

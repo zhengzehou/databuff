@@ -9,7 +9,9 @@ import com.databuff.apm.web.monitor.AlarmStore;
 import com.databuff.apm.web.monitor.EventRule;
 import com.databuff.apm.web.monitor.EventRuleService;
 import com.databuff.apm.web.monitor.policy.AlarmPolicySupport;
+import com.databuff.apm.web.cockpit.TrafficLightService;
 import com.databuff.apm.web.persistence.EventPersistence;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 
@@ -35,14 +37,26 @@ public class AlarmService {
     private final AlarmStore alarmStore;
     private final EventRuleService eventRuleService;
     private final EventPersistence eventPersistence;
+    private final TrafficLightService trafficLightService;
 
+    @Autowired
+    public AlarmService(
+            AlarmStore alarmStore,
+            EventRuleService eventRuleService,
+            @Nullable EventPersistence eventPersistence,
+            TrafficLightService trafficLightService) {
+        this.alarmStore = alarmStore;
+        this.eventRuleService = eventRuleService;
+        this.eventPersistence = eventPersistence;
+        this.trafficLightService = trafficLightService;
+    }
+
+    /** 兼容旧构造（测试用）：不注入长连接服务配置，即不做排除。 */
     public AlarmService(
             AlarmStore alarmStore,
             EventRuleService eventRuleService,
             @Nullable EventPersistence eventPersistence) {
-        this.alarmStore = alarmStore;
-        this.eventRuleService = eventRuleService;
-        this.eventPersistence = eventPersistence;
+        this(alarmStore, eventRuleService, eventPersistence, null);
     }
 
     public long countAlarms(Map<String, Object> body) {
@@ -204,7 +218,12 @@ public class AlarmService {
     }
 
     private List<Alarm> listAlarmsInQueryRange(Instant fromInstant, Instant toInstant) {
-        return alarmStore.listInTimeRange(fromInstant, toInstant);
+        // 长连接服务配置排除：/alarm/list、/alarm/trend、计数与下拉选项统一不返回这些服务的告警
+        List<Alarm> alarms = alarmStore.listInTimeRange(fromInstant, toInstant);
+        if (trafficLightService == null) {
+            return alarms;
+        }
+        return trafficLightService.excludeLongConnServices(alarms, Alarm::service);
     }
 
     private List<Alarm> filterAlarms(Map<String, Object> body, List<Alarm> alarms) {
