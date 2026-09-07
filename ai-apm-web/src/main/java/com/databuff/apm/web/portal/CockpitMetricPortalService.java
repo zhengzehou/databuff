@@ -156,7 +156,7 @@ public class CockpitMetricPortalService {
         Map<String, Object> queryBody = buildMetricQueryBody(metric, aggs, serviceNames, "service", null,
                 window.startSec(), window.endSec(), window.interval(), TOP_GROUP_LIMIT, filters);
         List<Map<String, Object>> rows = new ArrayList<>();
-        if (!includeSeries && "sum".equalsIgnoreCase(aggs)) {
+        if (!includeSeries && ("sum".equalsIgnoreCase(aggs) || isErrorRateMetric(metric))) {
             // sum 语义且无需序列：top 分组标量一次查询即最终结果。
             // 原实现丢弃该查询的总量、再发 1+N 次逐组时序查询重算同样的数（接口 4-5s 的主因）。
             for (ApmQueryModels.TopGroupTotal total : metricQueryService.metricTopGroupTotals(queryBody)) {
@@ -191,6 +191,24 @@ public class CockpitMetricPortalService {
                 }
                 rows.add(row);
             }
+        }
+        if (includeSeries && isErrorRateMetric(metric) && !rows.isEmpty()) {
+            Map<String, Double> weightedTotals = new LinkedHashMap<>();
+            for (ApmQueryModels.TopGroupTotal total : metricQueryService.metricTopGroupTotals(queryBody)) {
+                if (total.groupValue() != null && !total.groupValue().isBlank()) {
+                    weightedTotals.put(total.groupValue(), total.metricTotal());
+                }
+            }
+            for (Map<String, Object> row : rows) {
+                Double total = weightedTotals.get(stringValue(row.get("service")));
+                if (total != null) {
+                    row.put("value", total);
+                }
+            }
+        }
+        if (isErrorRateMetric(metric)) {
+            // Error rate service lists exclude services with no errors in the window.
+            rows.removeIf(row -> doubleOf(row.get("value")) <= 0D);
         }
         rows.sort((a, b) -> Double.compare(doubleOf(b.get("value")), doubleOf(a.get("value"))));
         return rows.size() > limit ? new ArrayList<>(rows.subList(0, limit)) : rows;
@@ -269,6 +287,10 @@ public class CockpitMetricPortalService {
     // ---------- 内部工具 ----------
 
     private double aggregate(MetricItem item, List<String> serviceNames, Window window, long startSec, long endSec) {
+        if (isErrorRateMetric(item.metric())) {
+            // Error rate is a weighted window ratio, not an average of bucket ratios.
+            return directTotal(item, serviceNames, startSec, endSec);
+        }
         // sum 语义（只要一个窗口总数）：直接对目标表条件聚合，跳过"按时间桶分组出序列、Java 再求和"
         if ("sum".equalsIgnoreCase(item.aggs())) {
             return directTotal(item, serviceNames, startSec, endSec);
@@ -626,6 +648,9 @@ public class CockpitMetricPortalService {
         return result;
     }
 
+    private static boolean isErrorRateMetric(String metric) {
+        return metric != null && metric.endsWith(".error.pct");
+    }
     private static String resolveEndpointMetricAlias(String metric) {
         if (metric == null) return "";
         return switch (metric) {
@@ -637,7 +662,7 @@ public class CockpitMetricPortalService {
     }
 
     private static String defaultAggsForMetric(String metric) {
-        if ("service.http.error".equals(metric) || "service.error".equals(metric)) return "avg";
+        if ("service.http.error".equals(metric) || "service.http.error.pct".equals(metric) || "service.error".equals(metric) || "service.error.pct".equals(metric)) return "avg";
         return "sum";
     }
 

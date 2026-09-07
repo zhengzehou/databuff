@@ -254,7 +254,7 @@
             </template>
           </el-table-column>
           <el-table-column :label="kpiDrillValueLabel" prop="value" align="right" min-width="120">
-            <template slot-scope="{ row }">{{ kpiDrillUnit === '%' ? row.value.toFixed(2) : formatValue(row.value) }}{{ kpiDrillUnit }}</template>
+            <template slot-scope="{ row }">{{ kpiDrillUnit === '%' ? row.value.toFixed(4) : formatValue(row.value) }}{{ kpiDrillUnit }}</template>
           </el-table-column>
           <el-table-column v-if="kpiDrillCountLabel" :label="kpiDrillCountLabel" prop="count" align="right" min-width="130">
             <template slot-scope="{ row }">{{ formatValue(row.count) }}</template>
@@ -410,8 +410,8 @@ export default class MonitorTab extends Vue {
   private get kpiList () {
     return [
       {
-        title: '可用性 SLA', metric: 'service.error', aggs: 'avg' as const, unit: '%', slaMode: true, higherIsBetter: true,
-        tip: '可用性 SLA = 100% − 错误率。',
+        title: '可用性 SLA', metric: 'service.error.pct', aggs: 'avg' as const, unit: '%', slaMode: true, higherIsBetter: true,
+        tip: '可用性 SLA = 100% − 错误率（错误数 / 请求数）。',
       },
       { title: '请求量', metric: 'service.cnt', aggs: 'sum' as const, unit: '', higherIsBetter: true },
       {
@@ -419,9 +419,9 @@ export default class MonitorTab extends Vue {
         tip: '异常数 = service.exception.cnt（异常次数）在所选时间窗内各时间桶求和，聚合方式为 sum。',
       },
       {
-        title: '错误率', metric: 'service.error', aggs: 'avg' as const, unit: '%', higherIsBetter: false,
-        tip: '错误率 = service.error 在所选时间窗内各时间桶的平均值（avg）。\n点击数值可下钻查看各服务的错误率与错误次数。',
-        drill: { metric: 'service.error', aggs: 'avg' as const, unit: '%', valueLabel: '错误率', countMetric: 'service.cnt', countAggs: 'sum' as const, countLabel: '错误次数' },
+        title: '错误率', metric: 'service.error.pct', aggs: 'avg' as const, unit: '%', higherIsBetter: false,
+        tip: '错误率 = 错误数 / 请求数 × 100。点击数值可下钻查看各服务的错误率与错误次数。',
+        drill: { metric: 'service.error.pct', aggs: 'avg' as const, unit: '%', valueLabel: '错误率', countMetric: 'service.error', countAggs: 'sum' as const, countLabel: '错误次数' },
       },
       {
         title: '慢调用', metric: 'service.http.cnt', aggs: 'sum' as const, unit: '', higherIsBetter: false,
@@ -437,7 +437,7 @@ export default class MonitorTab extends Vue {
     return [
       { title: '请求量', metric: 'service.cnt', aggs: 'sum' as const },
       { title: '异常数', metric: 'service.exception.cnt', aggs: 'sum' as const },
-      { title: '错误率(%)', metric: 'service.error', aggs: 'avg' as const },
+      { title: '错误率(%)', metric: 'service.error.pct', aggs: 'avg' as const },
     ];
   }
 
@@ -847,6 +847,7 @@ export default class MonitorTab extends Vue {
       'service.cnt': { metric: 'service.http.cnt', aggs: 'sum', groupBy: 'resource' },
       'req': { metric: 'service.http.cnt', aggs: 'sum', groupBy: 'resource' },
       'service.error': { metric: 'service.http.error', aggs: 'avg', groupBy: 'resource' },
+      'service.error.pct': { metric: 'service.http.error.pct', aggs: 'avg', groupBy: 'resource' },
       'err': { metric: 'service.http.error', aggs: 'avg', groupBy: 'resource' },
       'service.exception.cnt': { metric: 'service.exception.cnt', aggs: 'sum', groupBy: 'resource' },
       'exc': { metric: 'service.exception.cnt', aggs: 'sum', groupBy: 'resource' },
@@ -952,7 +953,9 @@ export default class MonitorTab extends Vue {
           const vSeries = valueRows.find((s) => s.service === r.service)?.series || [];
           const cSeries = countMap.get(r.service) || [];
           const cMap = new Map(cSeries.map(([ts, v]) => [ts, v]));
-          const count = vSeries.reduce((acc, [ts, v]) => acc + (v / 100) * (cMap.get(ts) || 0), 0);
+          const count = cfg.countMetric === 'service.error'
+            ? cSeries.reduce((acc, [, v]) => acc + v, 0)
+            : vSeries.reduce((acc, [ts, v]) => acc + (v / 100) * (cMap.get(ts) || 0), 0);
           return { ...r, count };
         });
       } else {

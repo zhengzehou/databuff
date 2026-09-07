@@ -3928,6 +3928,20 @@ public final class MetricQueryBuilder {
             long fromMillis,
             long toMillis,
             String extraFilters) {
+        String derivedExpr = derivedMetricValueExpr(fieldColumn);
+        if (derivedExpr != null) {
+            return """
+                    SELECT %s AS metric_total, COUNT(*) AS matched_rows
+                    FROM %s.`%s`
+                    WHERE %s
+                    %s
+                    """.formatted(
+                    derivedExpr,
+                    database,
+                    table,
+                    metricTsWhere(fromMillis, toMillis),
+                    extraFilters == null ? "" : extraFilters);
+        }
         String column = MetricIdentifierParser.toFieldColumnName(fieldColumn);
         return """
                 SELECT SUM(`%s`) AS metric_total, COUNT(*) AS matched_rows

@@ -78,7 +78,7 @@ export default class MetricKpiCard extends Vue {
 
   private formatNumber (v: number) {
     if (this.unit === '%') {
-      return v.toFixed(2);
+      return v.toFixed(4);
     }
     if (Math.abs(v) >= 10000) {
       return (v / 10000).toFixed(2) + '万';
