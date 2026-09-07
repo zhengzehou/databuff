@@ -225,6 +225,9 @@ export default class ConfigDialog extends Vue {
     this.settingForm = {
       showServiceNumber: FAULT_HEALTH_DEFAULTS.showServiceNumber,
       ...this.defaultThresholds,
+      longConnServices: '',
+      nginxNoiseHosts: '',
+      nginxNoiseUris: '',
     }
     this.$refs.settingForm.resetFields()
     this.showDialog = false

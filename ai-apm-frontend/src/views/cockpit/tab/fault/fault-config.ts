@@ -40,5 +40,7 @@ export const buildFaultStyleCfg = (data: Record<string, any> = {}) => {
     longConnServices: Array.isArray(data.longConnServices)
       ? data.longConnServices.join(',')
       : (data.longConnServices ?? ''),
+    nginxNoiseHosts: data.nginxNoiseHosts ?? '',
+    nginxNoiseUris: data.nginxNoiseUris ?? '',
   };
 };
