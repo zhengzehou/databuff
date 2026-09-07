@@ -7,7 +7,6 @@
     "copy:mermaid": "node scripts/copy-mermaid-vendor.mjs",
     "postinstall": "node scripts/copy-mermaid-vendor.mjs",
     "dev": "yarn copy:mermaid && vite",
-    "prd": "yarn copy:mermaid && vite --mode production",
     "serve": "yarn copy:mermaid && vite --host",
     "build": "yarn copy:mermaid && tsc && vite build",
     "i18n:extract": "node scripts/i18n-normalize.mjs",

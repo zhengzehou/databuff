@@ -2,6 +2,7 @@ package com.databuff.apm.web.portal;
 
 import com.databuff.apm.common.query.ApmQueryModels;
 import com.databuff.apm.common.query.ApmQueryModels.TrafficLightPoint;
+import com.databuff.apm.common.time.ApmTimeZones;
 import com.databuff.apm.common.util.PortalServiceIdResolver;
 import com.databuff.apm.web.monitor.Alarm;
 import com.databuff.apm.web.cockpit.TrafficLightService;
@@ -9,6 +10,7 @@ import com.databuff.apm.web.monitor.AlarmStore;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -879,6 +881,46 @@ public class CockpitPortalService {
             return Long.parseLong(String.valueOf(value).trim());
         } catch (NumberFormatException e) {
             return defaultValue;
+        }
+    }
+
+    private static String trafficLightColor(
+            TrafficLightPoint point,
+            double errorRateThreshold,
+            double minRequestCount) {
+        if (point.totalCount() < minRequestCount) {
+            return "grey";
+        }
+        if (point.totalCount() <= 0) {
+            return "grey";
+        }
+        double rate = (double) point.errorCount() / point.totalCount();
+        if (rate > errorRateThreshold) {
+            return "red";
+        }
+        if (rate > errorRateThreshold / 2) {
+            return "yellow";
+        }
+        return "green";
+    }
+
+    private static long parseTsMillis(String ts) {
+        if (ts == null || ts.isBlank()) {
+            return 0L;
+        }
+        String text = ts.trim();
+        if (text.chars().allMatch(Character::isDigit)) {
+            long n = Long.parseLong(text);
+            return n < 1_000_000_000_000L ? n * 1000L : n;
+        }
+        try {
+            return ApmTimeZones.wallClockToEpochMilli(text);
+        } catch (DateTimeParseException ignored) {
+            String iso = text.replace(' ', 'T');
+            if (!iso.contains("Z") && !iso.contains("+") && !iso.contains("-") && iso.contains("T")) {
+                iso += "Z";
+            }
+            return Instant.parse(iso).toEpochMilli();
         }
     }
 

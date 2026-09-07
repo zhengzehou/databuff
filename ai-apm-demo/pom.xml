@@ -43,7 +43,7 @@
         <dependency>
             <groupId>com.databuff.apm</groupId>
             <artifactId>ai-apm-ingest</artifactId>
-            <version>0.1.8</version>
+            <version>0.1.9</version>
             <scope>compile</scope>
         </dependency>
     </dependencies>
