@@ -111,12 +111,12 @@ public class NginxNoiseFilter {
                 && BUILTIN_PROXY_HOST_EXACT.contains(proxyHost.trim().toLowerCase(Locale.ROOT))) {
             return true;
         }
-        String target = fullUri != null && !fullUri.isBlank() ? fullUri : uri;
+        String target = uri != null && !uri.isBlank() ? uri : fullUri;
         if (target == null) {
             return false;
         }
         for (String prefix : BUILTIN_URI_PREFIXES) {
-            if (target.startsWith(prefix)) {
+            if (target.contains(prefix)) {
                 return true;
             }
         }
