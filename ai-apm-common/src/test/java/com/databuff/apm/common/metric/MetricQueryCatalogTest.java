@@ -57,6 +57,26 @@ class MetricQueryCatalogTest {
     }
 
     @Test
+    void expandAddsHttpAvailabilityAndStatusAwareSuccessRate() {
+        Map<String, Map<String, Object>> fields = new LinkedHashMap<>();
+        fields.put("cnt", field("sum", "请求数"));
+        fields.put("error", field("sum", "错误数"));
+
+        Map<String, MetricQueryDefinition> expanded = MetricQueryCatalog.expand(
+                List.of(seedRow("service.http", fields, true)));
+
+        assertThat(expanded).containsKeys(
+                "service.http.availability.pct",
+                "service.http.success.pct",
+                "service.http.client_error.pct",
+                "service.http.server_error.pct");
+        assertThat(expanded.get("service.http.availability.pct").getFormula()).contains("5xx");
+        assertThat(expanded.get("service.http.unavailability.pct").getFormula()).contains("5xx");
+        assertThat(expanded.get("service.http.success.pct").getFormula()).contains("4xx+5xx");
+        assertThat(expanded.get("service.http.client_error.pct").getFormula()).contains("4xx");
+        assertThat(expanded.get("service.http.server_error.pct").getFormula()).contains("5xx");
+    }
+    @Test
     void expandUsesAvgFormulaForGaugeAggregator() {
         Map<String, Map<String, Object>> fields = Map.of(
                 "latency", Map.of(

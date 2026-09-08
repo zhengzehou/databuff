@@ -12,8 +12,10 @@ import com.databuff.apm.common.storage.ApmReadRepository;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -258,4 +260,57 @@ class MetricQueryServiceTest {
                         && sql.contains("SUM(`sumDuration`) / NULLIF(SUM(`cnt`), 0) / 1000000")
                         && !sql.contains("`avgDuration`")));
     }
-}
+
+    @Test
+    void returnsMultipleMetricTotalsFromOneQuery() throws Exception {
+        ApmReadRepository reader = mock(ApmReadRepository.class);
+        when(reader.queryRows(anyString(), anyInt())).thenReturn(List.of(Map.of(
+                "metric_0", 120L,
+                "metric_1", 2.5D,
+                "matched_rows", 8L)));
+        MetricQueryService service = new MetricQueryService(reader, TestStorageSupport.storage());
+
+        MetricQueryService.MetricTotalsBatchSnapshot snapshot = service.metricTotalsBatch(Map.of(
+                "start", 1_710_000_000L,
+                "end", 1_710_000_120L,
+                "query", Map.of("A", Map.of(
+                        "metrics", List.of("service.cnt", "service.error.pct"),
+                        "aggregations", List.of("sum", "avg")))));
+
+        assertThat(snapshot.matchedRows()).isEqualTo(8L);
+        assertThat(snapshot.totals())
+                .containsEntry("service.cnt", 120D)
+                .containsEntry("service.error.pct", 2.5D);
+        verify(reader).queryRows(org.mockito.ArgumentMatchers.argThat(sql ->
+                sql.contains("SUM(`cnt`) AS metric_0")
+                        && sql.contains("SUM(`error`) / NULLIF(SUM(`cnt`), 0) * 100 AS metric_1")
+                        && sql.contains("FROM databuff.`metric_service`")), org.mockito.ArgumentMatchers.eq(1));
+    }
+
+    @Test
+    void returnsMultipleMetricSeriesFromOneQuery() throws Exception {
+        ApmReadRepository reader = mock(ApmReadRepository.class);
+        when(reader.queryRows(anyString(), anyInt())).thenReturn(List.of(
+                Map.of("epoch_sec", 1_710_000_000L, "metric_0", 100L, "metric_1", 1D),
+                Map.of("epoch_sec", 1_710_000_060L, "metric_0", 80L, "metric_1", 2D)));
+        MetricQueryService service = new MetricQueryService(reader, TestStorageSupport.storage());
+
+        Map<String, MetricQueryService.MetricSeriesBatchSnapshot> snapshots = service.metricSeriesBatch(Map.of(
+                "start", 1_710_000_000L,
+                "end", 1_710_000_120L,
+                "interval", 60,
+                "query", Map.of("A", Map.of(
+                        "metrics", List.of("service.cnt", "service.error.pct"),
+                        "aggregations", List.of("sum", "avg")))));
+
+        assertThat(snapshots).containsKeys("service.cnt", "service.error.pct");
+        assertThat(snapshots.get("service.cnt").points())
+                .extracting(MetricSeriesPoint::value)
+                .containsExactly(100D, 80D);
+        assertThat(snapshots.get("service.error.pct").unit()).isEqualTo("%");
+        verify(reader).queryRows(org.mockito.ArgumentMatchers.argThat(sql ->
+                sql.contains("AS metric_0")
+                        && sql.contains("AS metric_1")
+                        && sql.contains("GROUP BY epoch_sec")
+                        && sql.contains("FROM databuff.`metric_service`")), anyInt());
+    }}
