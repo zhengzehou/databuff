@@ -39,6 +39,15 @@ public class MetricQueryService {
         this.metricDatabase = storageProperties.metricDatabase();
     }
 
+    public record MetricTotalsBatchSnapshot(Map<String, Double> totals, long matchedRows) {
+        static MetricTotalsBatchSnapshot empty() {
+            return new MetricTotalsBatchSnapshot(Map.of(), 0);
+        }
+    }
+
+    public record MetricSeriesBatchSnapshot(String unit, List<MetricSeriesPoint> points) {
+    }
+
     public List<ServiceMetricPoint> serviceSeries(ServiceSeriesRequest request) {
         try {
             String sql = MetricQueryBuilder.serviceSeriesSql(
@@ -141,6 +150,7 @@ public class MetricQueryService {
 
     @SuppressWarnings("unchecked")
     public List<Map<String, Object>> metricChart(Map<String, Object> body) {
+        long startedNanos = System.nanoTime();
         try {
             Map<String, Object> queryRoot = body.get("query") instanceof Map<?, ?> queryMap
                     ? (Map<String, Object>) queryMap
@@ -165,13 +175,16 @@ public class MetricQueryService {
 
             MetricIdentifierParser.ParsedMetric parsed = MetricIdentifierParser.parse(metric);
             if ("service.exception".equals(parsed.measurement())) {
-                return List.of(buildChartSeries(
+                List<Map<String, Object>> result = List.of(buildChartSeries(
                         serviceErrorSeries(new MetricSeriesRequest(metric, start, end, filters)),
                         Map.of(),
                         metric,
                         start,
                         end,
                         interval));
+                log.info("metricChart metric={} exceptionSeries rows={} elapsedMs={}",
+                        metric, result.size(), (System.nanoTime() - startedNanos) / 1_000_000D);
+                return result;
             }
             String table = MetricIdentifierParser.dorisTableName(parsed.measurement());
             String filterClause = buildFilterClause(filters);
@@ -197,14 +210,20 @@ public class MetricQueryService {
                             end,
                             interval));
                 }
+                log.info("metricChart metric={} by={} groups={} rows={} elapsedMs={}",
+                        metric, groupBy, groups.size(), series.size(), (System.nanoTime() - startedNanos) / 1_000_000D);
                 return series;
             }
 
             String sql = MetricQueryBuilder.metricFieldSeriesSql(
                     metricDatabase, table, fieldColumn, toMillis(start), toMillis(end), filterClause, interval, aggs);
-            return List.of(buildChartSeries(
-                    readRepository.queryMetricSeries(sql), Map.of(), metric, start, end, interval));
+            List<MetricSeriesPoint> raw = readRepository.queryMetricSeries(sql);
+            log.info("metricChart metric={} by=none rows={} elapsedMs={} sql={}",
+                    metric, raw.size(), (System.nanoTime() - startedNanos) / 1_000_000D, sql);
+            return List.of(buildChartSeries(raw, Map.of(), metric, start, end, interval));
         } catch (Exception e) {
+            log.error("metricChart error metric={} elapsedMs={}",
+                    body.get("query"), (System.nanoTime() - startedNanos) / 1_000_000D, e);
             return List.of();
         }
     }
@@ -237,9 +256,11 @@ public class MetricQueryService {
             String fieldColumn = MetricIdentifierParser.toDorisFieldColumn(parsed);
             String sql = MetricQueryBuilder.metricFieldTotalSql(
                     metricDatabase, table, fieldColumn, toMillis(start), toMillis(end), filterClause);
-            log.info("metricTotal metric={} table={} fieldColumn={} sql={}", metric, table, fieldColumn, sql);
+            long queryNanos = System.nanoTime();
             ApmQueryModels.MetricTotalSnapshot snapshot = readRepository.queryMetricTotal(sql);
-            log.info("metricTotal metric={} total={} matchedRows={}", metric, snapshot.total(), snapshot.matchedRows());
+            log.info("metricTotal metric={} table={} total={} matchedRows={} elapsedMs={} sql={}",
+                    metric, table, snapshot.total(), snapshot.matchedRows(),
+                    (System.nanoTime() - queryNanos) / 1_000_000D, sql);
             return snapshot;
         } catch (Exception e) {
             log.error("metricTotal error metric={}", body.get("query"), e.getMessage(), e);
@@ -247,6 +268,74 @@ public class MetricQueryService {
         }
     }
 
+    /** Multiple scalar metrics sharing one table and filter, read with one Doris scan. */
+    public MetricTotalsBatchSnapshot metricTotalsBatch(Map<String, Object> body) {
+        MetricBatchParams params = parseMetricBatchParams(body);
+        if (params == null) {
+            return MetricTotalsBatchSnapshot.empty();
+        }
+        try {
+            String sql = MetricQueryBuilder.metricFieldsTotalSql(
+                    metricDatabase, params.table(), params.fieldColumns(), params.aggregations(),
+                    toMillis(params.start()), toMillis(params.end()), params.filterClause());
+            long queryNanos = System.nanoTime();
+            List<Map<String, Object>> rows = readRepository.queryRows(sql, 1);
+            if (rows.isEmpty()) {
+                log.info("metricTotalsBatch metrics={} table={} rows=0 elapsedMs={} sql={}",
+                        params.metrics(), params.table(), (System.nanoTime() - queryNanos) / 1_000_000D, sql);
+                return MetricTotalsBatchSnapshot.empty();
+            }
+            Map<String, Object> row = rows.get(0);
+            Map<String, Double> totals = new LinkedHashMap<>();
+            for (int i = 0; i < params.metrics().size(); i++) {
+                totals.put(params.metrics().get(i), toDouble(row.get("metric_" + i)));
+            }
+            long matchedRows = toLong(row.get("matched_rows"));
+            log.info("metricTotalsBatch metrics={} table={} matchedRows={} elapsedMs={} sql={}",
+                    params.metrics(), params.table(), matchedRows,
+                    (System.nanoTime() - queryNanos) / 1_000_000D, sql);
+            return new MetricTotalsBatchSnapshot(totals, matchedRows);
+        } catch (Exception e) {
+            log.error("metricTotalsBatch error: {}", e.getMessage(), e);
+            return MetricTotalsBatchSnapshot.empty();
+        }
+    }
+
+    /** Multiple time series sharing one table and filter, read with one Doris scan. */
+    public Map<String, MetricSeriesBatchSnapshot> metricSeriesBatch(Map<String, Object> body) {
+        MetricBatchParams params = parseMetricBatchParams(body);
+        if (params == null) {
+            return Map.of();
+        }
+        try {
+            String sql = MetricQueryBuilder.metricFieldsSeriesSql(
+                    metricDatabase, params.table(), params.fieldColumns(), params.aggregations(),
+                    toMillis(params.start()), toMillis(params.end()), params.filterClause(), params.interval());
+            int bucketCount = (int) Math.max(1, Math.ceil((double) (params.end() - params.start()) / params.interval()));
+            long queryNanos = System.nanoTime();
+            List<Map<String, Object>> rows = readRepository.queryRows(sql, Math.min(1000, bucketCount));
+            log.info("metricSeriesBatch metrics={} table={} rows={} buckets={} elapsedMs={} sql={}",
+                    params.metrics(), params.table(), rows.size(), bucketCount,
+                    (System.nanoTime() - queryNanos) / 1_000_000D, sql);
+            Map<String, MetricSeriesBatchSnapshot> result = new LinkedHashMap<>();
+            for (int i = 0; i < params.metrics().size(); i++) {
+                List<MetricSeriesPoint> points = new ArrayList<>(rows.size());
+                for (Map<String, Object> row : rows) {
+                    Object raw = row.get("metric_" + i);
+                    points.add(new MetricSeriesPoint(toLong(row.get("epoch_sec")),
+                            raw == null ? null : toDouble(raw)));
+                }
+                List<MetricSeriesPoint> filled = TimeSeriesFillUtil.fillMetricSeries(
+                        points, toMillis(params.start()), toMillis(params.end()), params.interval());
+                String metric = params.metrics().get(i);
+                result.put(metric, new MetricSeriesBatchSnapshot(metricUnit(metric), filled));
+            }
+            return result;
+        } catch (Exception e) {
+            log.error("metricSeriesBatch error: {}", e.getMessage(), e);
+            return Map.of();
+        }
+    }
     /**
      * 分组聚合标量：直接返回 top 分组的窗口总量（1 次查询）。
      * 替代 metricChart 分组路径"top 分组 + 逐组时序查询再求和"的 1+N 模式——
@@ -335,6 +424,56 @@ public class MetricQueryService {
         }
     }
 
+    private record MetricBatchParams(
+            List<String> metrics,
+            String table,
+            List<String> fieldColumns,
+            List<String> aggregations,
+            String filterClause,
+            int interval,
+            long start,
+            long end) {
+    }
+
+    @SuppressWarnings("unchecked")
+    private MetricBatchParams parseMetricBatchParams(Map<String, Object> body) {
+        try {
+            Map<String, Object> queryRoot = body.get("query") instanceof Map<?, ?> queryMap
+                    ? (Map<String, Object>) queryMap
+                    : Map.of();
+            Map<String, Object> metricQuery = queryRoot.get("A") instanceof Map<?, ?> aMap
+                    ? (Map<String, Object>) aMap
+                    : Map.of();
+            List<String> metrics = parseStringList(metricQuery.get("metrics"));
+            if (metrics.isEmpty()) {
+                return null;
+            }
+            List<String> requestedAggregations = parseStringList(metricQuery.get("aggregations"));
+            List<String> fieldColumns = new ArrayList<>(metrics.size());
+            List<String> aggregations = new ArrayList<>(metrics.size());
+            String table = null;
+            for (int i = 0; i < metrics.size(); i++) {
+                MetricIdentifierParser.ParsedMetric parsed = MetricIdentifierParser.parse(metrics.get(i));
+                String metricTable = MetricIdentifierParser.dorisTableName(parsed.measurement());
+                if (table == null) {
+                    table = metricTable;
+                } else if (!table.equals(metricTable)) {
+                    throw new IllegalArgumentException("batch metrics must use the same Doris table");
+                }
+                fieldColumns.add(MetricIdentifierParser.toDorisFieldColumn(parsed));
+                aggregations.add(i < requestedAggregations.size() ? requestedAggregations.get(i) : "");
+            }
+            long start = normalizeTime(toLong(body.get("start")));
+            long end = normalizeTime(toLong(body.get("end")));
+            int interval = Math.max(60, toInt(body.get("interval"), 60));
+            String filterClause = buildFilterClause(parseFilters(metricQuery.get("from")));
+            return new MetricBatchParams(metrics, table, fieldColumns, aggregations,
+                    filterClause, interval, start, end);
+        } catch (Exception e) {
+            log.error("parseMetricBatchParams error: {}", e.getMessage(), e);
+            return null;
+        }
+    }
     /** metricChart/metricTopGroupTotals/metricGroupBucketSeries 共用的 query.A 入参解析结果。 */
     private record MetricChartParams(
             String metric,
@@ -405,6 +544,12 @@ public class MetricQueryService {
 
     private static String metricUnit(String metric) {
         String lower = metric.toLowerCase();
+        if (lower.endsWith(".pct")) {
+            return "%";
+        }
+        if (lower.endsWith(".avgduration")) {
+            return "ms";
+        }
         if (lower.contains("collection_count")) {
             return "count";
         }
@@ -439,6 +584,16 @@ public class MetricQueryService {
         }
     }
 
+    private static double toDouble(Object value) {
+        if (value instanceof Number number) {
+            return number.doubleValue();
+        }
+        try {
+            return Double.parseDouble(String.valueOf(value));
+        } catch (NumberFormatException ex) {
+            return 0D;
+        }
+    }
     private static int toInt(Object value, int fallback) {
         if (value instanceof Number number) {
             return number.intValue();

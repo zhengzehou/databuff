@@ -44,9 +44,26 @@ public final class MetricQueryCatalog {
                 result.put(measurement + ".error.pct", derived(
                         row, measurement + ".error.pct", "错误率", "percent", "%",
                         "(sum(error)/sum(cnt)) * 100", error));
+                if ("service.http".equals(measurement)) {
+                    result.put(measurement + ".availability.pct", derived(
+                            row, measurement + ".availability.pct", "可用性 SLA", "percent", "%",
+                            "(1-(5xx+other error-marked requests excluding 4xx)/cnt) * 100", error));
+                    result.put(measurement + ".unavailability.pct", derived(
+                            row, measurement + ".unavailability.pct", "服务不可用率", "percent", "%",
+                            "(5xx+other error-marked requests excluding 4xx)/cnt * 100", error));
+                    result.put(measurement + ".client_error.pct", derived(
+                            row, measurement + ".client_error.pct", "HTTP 4xx 率", "percent", "%",
+                            "sum(http 4xx cnt)/sum(cnt) * 100", error));
+                    result.put(measurement + ".server_error.pct", derived(
+                            row, measurement + ".server_error.pct", "HTTP 5xx 率", "percent", "%",
+                            "sum(http 5xx cnt)/sum(cnt) * 100", error));
+                }
                 result.put(measurement + ".success.pct", derived(
                         row, measurement + ".success.pct", "成功率", "percent", "%",
-                        "(1-sum(error)/sum(cnt)) * 100", error));
+                        "service.http".equals(measurement)
+                                ? "(1-(4xx+5xx+other error-marked requests)/cnt) * 100"
+                                : "(1-sum(error)/sum(cnt)) * 100",
+                        error));
             }
             if (slow != null) {
                 result.put(measurement + ".slow.pct", derived(

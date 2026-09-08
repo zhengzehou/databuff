@@ -3779,7 +3779,7 @@ public final class MetricQueryBuilder {
             return jvmGcCounterSeriesSql(
                     database, table, fieldColumn, fromMillis, toMillis, extraFilters, intervalSec, aggs);
         }
-        String derivedExpr = derivedMetricValueExpr(fieldColumn);
+        String derivedExpr = derivedMetricValueExpr(table, fieldColumn);
         if (derivedExpr != null) {
             return derivedMetricSeriesSql(
                     database, table, derivedExpr, fromMillis, toMillis, extraFilters, intervalSec);
@@ -3802,6 +3802,63 @@ public final class MetricQueryBuilder {
                 table,
                 metricTsWhere(fromMillis, toMillis),
                 extraFilters == null ? "" : extraFilters);
+    }
+
+    private static String derivedMetricValueExpr(String table, String fieldColumn) {
+        if (DorisTableNames.METRIC_SERVICE_HTTP.equals(table)) {
+            return switch (fieldColumn) {
+                case "availability.pct" -> httpAvailabilityPctExpr();
+                case "unavailability.pct" -> httpUnavailabilityPctExpr();
+                case "success.pct" -> httpSuccessPctExpr();
+                case "client_error.pct" -> httpStatusClassPctExpr("4");
+                case "server_error.pct" -> httpStatusClassPctExpr("5");
+                default -> derivedMetricValueExpr(fieldColumn);
+            };
+        }
+        return derivedMetricValueExpr(fieldColumn);
+    }
+
+    /**
+     * 该表/字段列是否存在可直接作为窗口总量的标量派生表达式
+     * （加权比率如 error.pct / availability.pct / client_error.pct，平均耗时 avgDuration 等）。
+     * 存在时批量标量查询（metricFieldsTotalSql）与单指标总量（metricFieldTotalSql）口径完全一致，
+     * 且无需按时间桶 GROUP BY 出序列后再聚合，大时间窗口下显著更快。
+     */
+    public static boolean hasDerivedScalarExpression(String table, String fieldColumn) {
+        return derivedMetricValueExpr(table, fieldColumn) != null;
+    }
+
+    /** Server availability excludes client-side 4xx responses from the bad count. */
+    private static String httpAvailabilityPctExpr() {
+        return "(1 - (" + httpServerFailureCountExpr()
+                + ") / NULLIF(SUM(`cnt`), 0)) * 100";
+    }
+
+    private static String httpUnavailabilityPctExpr() {
+        // Define unavailability from the exact availability expression so the two
+        // metrics cannot drift when the availability failure scope changes.
+        return "100 - (" + httpAvailabilityPctExpr() + ")";
+    }
+
+    /** API success rate counts 4xx, 5xx and non-status-code error-marked requests once. */
+    private static String httpSuccessPctExpr() {
+        return "(1 - (" + httpSuccessFailureCountExpr()
+                + ") / NULLIF(SUM(`cnt`), 0)) * 100";
+    }
+
+    private static String httpStatusClassPctExpr(String statusClass) {
+        return "SUM(CASE WHEN `httpCode` LIKE '" + statusClass
+                + "%' THEN `cnt` ELSE 0 END) / NULLIF(SUM(`cnt`), 0) * 100";
+    }
+
+    private static String httpServerFailureCountExpr() {
+        return "SUM(CASE WHEN `httpCode` LIKE '5%' THEN `cnt`"
+                + " WHEN `httpCode` LIKE '4%' THEN 0 ELSE `error` END)";
+    }
+
+    private static String httpSuccessFailureCountExpr() {
+        return "SUM(CASE WHEN `httpCode` LIKE '4%' OR `httpCode` LIKE '5%'"
+                + " THEN `cnt` ELSE `error` END)";
     }
 
     private static String derivedMetricValueExpr(String fieldColumn) {
@@ -3928,7 +3985,7 @@ public final class MetricQueryBuilder {
             long fromMillis,
             long toMillis,
             String extraFilters) {
-        String derivedExpr = derivedMetricValueExpr(fieldColumn);
+        String derivedExpr = derivedMetricValueExpr(table, fieldColumn);
         if (derivedExpr != null) {
             return """
                     SELECT %s AS metric_total, COUNT(*) AS matched_rows
@@ -3954,6 +4011,96 @@ public final class MetricQueryBuilder {
                 table,
                 metricTsWhere(fromMillis, toMillis),
                 extraFilters == null ? "" : extraFilters);
+    }
+
+    /** Multiple scalar metrics from the same table/filter in one Doris scan. */
+    public static String metricFieldsTotalSql(
+            String database,
+            String table,
+            List<String> fieldColumns,
+            List<String> aggregations,
+            long fromMillis,
+            long toMillis,
+            String extraFilters) {
+        validateMetricBatch(fieldColumns, aggregations);
+        StringBuilder select = new StringBuilder();
+        for (int i = 0; i < fieldColumns.size(); i++) {
+            if (i > 0) {
+                select.append(",\n       ");
+            }
+            select.append(metricBatchValueExpr(table, fieldColumns.get(i), aggregations.get(i)))
+                    .append(" AS metric_").append(i);
+        }
+        return """
+                SELECT %s,
+                       COUNT(*) AS matched_rows
+                FROM %s.`%s`
+                WHERE %s
+                %s
+                """.formatted(
+                select,
+                database,
+                table,
+                metricTsWhere(fromMillis, toMillis),
+                extraFilters == null ? "" : extraFilters);
+    }
+
+    /** Multiple bucketed metrics from the same table/filter in one Doris scan. */
+    public static String metricFieldsSeriesSql(
+            String database,
+            String table,
+            List<String> fieldColumns,
+            List<String> aggregations,
+            long fromMillis,
+            long toMillis,
+            String extraFilters,
+            int intervalSec) {
+        validateMetricBatch(fieldColumns, aggregations);
+        int bucketSec = Math.max(60, intervalSec);
+        StringBuilder select = new StringBuilder();
+        for (int i = 0; i < fieldColumns.size(); i++) {
+            if (i > 0) {
+                select.append(",\n       ");
+            }
+            select.append(metricBatchValueExpr(table, fieldColumns.get(i), aggregations.get(i)))
+                    .append(" AS metric_").append(i);
+        }
+        return """
+                SELECT %s AS epoch_sec,
+                       %s
+                FROM %s.`%s`
+                WHERE %s
+                %s
+                GROUP BY epoch_sec
+                ORDER BY epoch_sec ASC
+                """.formatted(
+                metricBucketEpochSecSelect(bucketSec),
+                select,
+                database,
+                table,
+                metricTsWhere(fromMillis, toMillis),
+                extraFilters == null ? "" : extraFilters);
+    }
+
+    private static String metricBatchValueExpr(String table, String fieldColumn, String aggregation) {
+        if (isJvmGcMonotonicField(fieldColumn)) {
+            throw new IllegalArgumentException("JVM monotonic counters cannot use metric batch aggregation");
+        }
+        String derivedExpr = derivedMetricValueExpr(table, fieldColumn);
+        if (derivedExpr != null) {
+            return derivedExpr;
+        }
+        String column = MetricIdentifierParser.toFieldColumnName(fieldColumn);
+        return resolveFieldAggregation(fieldColumn, aggregation).formatted(column);
+    }
+
+    private static void validateMetricBatch(List<String> fieldColumns, List<String> aggregations) {
+        if (fieldColumns == null || fieldColumns.isEmpty()) {
+            throw new IllegalArgumentException("metric batch fields are empty");
+        }
+        if (aggregations == null || aggregations.size() != fieldColumns.size()) {
+            throw new IllegalArgumentException("metric batch aggregations do not match fields");
+        }
     }
 
     public static String metricAvgDurationScalarSql(
@@ -4055,7 +4202,7 @@ public final class MetricQueryBuilder {
             return jvmGcCounterTopGroupsSql(
                     database, table, fieldColumn, groupColumn, fromMillis, toMillis, extraFilters, limit);
         }
-        String derivedExpr = derivedMetricValueExpr(fieldColumn);
+        String derivedExpr = derivedMetricValueExpr(table, fieldColumn);
         if (derivedExpr != null) {
             return derivedMetricTopGroupsSql(
                     database, table, derivedExpr, groupColumn, fromMillis, toMillis, extraFilters, limit);
@@ -4104,7 +4251,7 @@ public final class MetricQueryBuilder {
         if (isJvmGcMonotonicField(fieldColumn)) {
             return null;
         }
-        String derivedExpr = derivedMetricValueExpr(fieldColumn);
+        String derivedExpr = derivedMetricValueExpr(table, fieldColumn);
         String valueExpr = derivedExpr != null
                 ? derivedExpr
                 : resolveFieldAggregation(fieldColumn, aggs).formatted(MetricIdentifierParser.toFieldColumnName(fieldColumn));
