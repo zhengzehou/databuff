@@ -1,6 +1,7 @@
 <template>
   <div class="kpi-card" :class="{ 'is-drillable': !!drill }" v-loading="loading">
     <div class="kpi-title">
+      <i v-if="icon" :class="['kpi-icon', icon]"></i>
       <span class="kpi-title-text" :title="title">{{ title }}</span>
       <el-tooltip v-if="tip" :content="tip" placement="top">
         <i class="el-icon-question kpi-tip"></i>
@@ -28,6 +29,7 @@ import { Vue, Component, Prop } from 'vue-property-decorator';
 @Component
 export default class MetricKpiCard extends Vue {
   @Prop({ default: '' }) private title!: string;
+  @Prop({ default: '' }) private icon!: string;
   @Prop({ default: '' }) private unit!: string;
   @Prop({ default: true }) private higherIsBetter!: boolean;
   // 下钻配置：存在时卡片可点击，点击后向父组件抛出 drill 事件（携带本对象）。
@@ -80,6 +82,9 @@ export default class MetricKpiCard extends Vue {
     if (this.unit === '%') {
       return v.toFixed(4);
     }
+    if (this.unit === 'ms' || this.unit === '次/秒') {
+      return v.toFixed(2);
+    }
     if (Math.abs(v) >= 10000) {
       return (v / 10000).toFixed(2) + '万';
     }
@@ -117,6 +122,13 @@ export default class MetricKpiCard extends Vue {
     align-items: center;
     font-size: 13px;
     color: var(--color-text-secondary);
+
+    .kpi-icon {
+      flex: none;
+      margin-right: 6px;
+      font-size: 16px;
+      color: var(--color-text-link);
+    }
 
     .kpi-title-text {
       min-width: 0;

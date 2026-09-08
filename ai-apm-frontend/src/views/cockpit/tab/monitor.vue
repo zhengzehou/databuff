@@ -22,19 +22,31 @@
       <span class="toolbar-tip">默认展示全部服务数据，所有图表均已叠加「昨日」曲线做对比</span>
     </div>
 
-    <!-- 核心 KPI -->
-    <div class="kpi-row flex-h mb-16">
-      <metric-kpi-card
-        v-for="item in kpiList"
-        :key="item.title"
-        :title="item.title"
-        :unit="item.unit"
-        :higherIsBetter="item.higherIsBetter"
-        :value="kpiData[item.title]"
-        :loading="kpiLoading"
-        :drill="item.drill"
-        :tip="item.tip"
-        @drill="openKpiDrill" />
+    <!-- 核心 KPI：按稳定性、错误、流量、性能分组展示 -->
+    <div class="kpi-groups mb-16">
+      <section v-for="group in kpiGroups" :key="group.key" class="kpi-group bg-color br-4 p-16">
+        <div class="kpi-group-header">
+          <div class="kpi-group-title">
+            <i :class="group.icon"></i>
+            <span>{{ group.title }}</span>
+          </div>
+          <span class="kpi-group-desc">{{ group.description }}</span>
+        </div>
+        <div class="kpi-group-grid">
+          <metric-kpi-card
+            v-for="item in group.items"
+            :key="item.title"
+            :title="item.title"
+            :icon="kpiIcon(item)"
+            :unit="item.unit"
+            :higherIsBetter="item.higherIsBetter"
+            :value="kpiData[item.title]"
+            :loading="kpiLoading"
+            :drill="item.drill"
+            :tip="item.tip"
+            @drill="openKpiDrill" />
+        </div>
+      </section>
     </div>
 
     <!-- 核心趋势：单图多线，每个指标独立 Y 轴 -->
@@ -276,7 +288,7 @@ import MetricKpiCard from '../component/metric-kpi-card.vue';
 import MetricTrendCard from '../component/metric-trend-card.vue';
 import CardTrend from '../component/card-trend.vue';
 import BasicChart from '@/components/charts/basic-chart.vue';
-import ServiceApi from '@/api/service';
+import ApmApi from '@/api/apm';
 import AlarmApi from '@/api/alarm';
 import CockpitApi from '../api';
 import i18n from '@/i18n';
@@ -285,10 +297,20 @@ import { toAsyncWait } from '@/utils/common';
 import { fetchKpiSummary, fetchMetricTrends, fetchServiceRanking, fetchServiceEndpoints, toSeriesPoints, Series, MetricFilter } from '@/utils/metricQuery';
 import ServiceJvmTab from '@/views/appMonitor/serviceDetail/tab-jvm.vue';
 
-// 慢调用口径：查询条件 durationRange = '3000ms+'（单次请求耗时 >3s，DurationRangeUtil 分桶），
+// 慢调用口径：HTTP 入口请求（isIn=1）且 durationRange = '3000ms+'（单次请求耗时 >3s，DurationRangeUtil 分桶），
 // 统计值为该桶 cnt 求和，即真实的 >3s 慢请求总数。
 // 不用 slow 列：其阈值写死 500ms 且不可配；slowCnt/verySlowCnt 列从未写入（恒为 0）。
-const SLOW_FILTERS: MetricFilter[] = [{ left: 'durationRange', operator: '=', right: '3000ms+', connector: 'AND' }];
+const INBOUND_FILTERS: MetricFilter[] = [{ left: 'isIn', operator: '=', right: '1', connector: 'AND' }];
+const SLOW_FILTERS: MetricFilter[] = [
+  ...INBOUND_FILTERS,
+  { left: 'durationRange', operator: '=', right: '3000ms+', connector: 'AND' },
+];
+const SLOW_RATE_DENOMINATOR_KEY = '__入口HTTP请求数';
+
+const withInboundFilters = (metric: string, filters: MetricFilter[] = []) => {
+  if (!metric.startsWith('service.http.') && !metric.startsWith('service.rpc.')) return filters;
+  return filters.some((filter) => filter.left === 'isIn') ? filters : [...INBOUND_FILTERS, ...filters];
+};
 
 @Component({ components: { MetricKpiCard, MetricTrendCard, CardTrend, BasicChart, ServiceJvmTab } })
 export default class MonitorTab extends Vue {
@@ -410,33 +432,109 @@ export default class MonitorTab extends Vue {
   private get kpiList () {
     return [
       {
-        title: '可用性 SLA', metric: 'service.error.pct', aggs: 'avg' as const, unit: '%', slaMode: true, higherIsBetter: true,
-        tip: '可用性 SLA = 100% − 错误率（错误数 / 请求数）。',
+        title: '可用性 SLA', metric: 'service.http.availability.pct', aggs: 'avg' as const, unit: '%', higherIsBetter: true,
+        filters: INBOUND_FILTERS,
+        tip: '可用性 SLA = 100% × [1 −（HTTP 5xx 请求数 + 非 4xx/5xx 且被采集端标记为错误的请求数）÷ HTTP 入口请求总数]；4xx 不降低可用性。',
       },
-      { title: '请求量', metric: 'service.cnt', aggs: 'sum' as const, unit: '', higherIsBetter: true },
       {
-        title: '异常数', metric: 'service.exception.cnt', aggs: 'sum' as const, unit: '', higherIsBetter: false,
-        tip: '异常数 = service.exception.cnt（异常次数）在所选时间窗内各时间桶求和，聚合方式为 sum。',
+        title: '接口成功率', metric: 'service.http.success.pct', aggs: 'avg' as const, unit: '%', higherIsBetter: true,
+        filters: INBOUND_FILTERS,
+        tip: '接口成功率 = 100% × [1 −（HTTP 4xx + HTTP 5xx + 非状态码类且被采集端标记为错误的请求数）÷ HTTP 入口请求总数]。',
       },
       {
         title: '错误率', metric: 'service.error.pct', aggs: 'avg' as const, unit: '%', higherIsBetter: false,
-        tip: '错误率 = 错误数 / 请求数 × 100。点击数值可下钻查看各服务的错误率与错误次数。',
+        tip: '错误率 = SUM(error) ÷ NULLIF(SUM(cnt), 0) × 100；metric_service 仅写入服务入口 Span，error 为采集端标记错误的入口请求数。',
         drill: { metric: 'service.error.pct', aggs: 'avg' as const, unit: '%', valueLabel: '错误率', countMetric: 'service.error', countAggs: 'sum' as const, countLabel: '错误次数' },
       },
       {
-        title: '慢调用', metric: 'service.http.cnt', aggs: 'sum' as const, unit: '', higherIsBetter: false,
+        title: 'HTTP 4xx 率', metric: 'service.http.client_error.pct', aggs: 'avg' as const, unit: '%', higherIsBetter: false,
+        filters: INBOUND_FILTERS,
+        tip: 'HTTP 4xx 率 = HTTP 入口请求中状态码为 4xx 的请求数 ÷ HTTP 入口请求总数 × 100%。',
+      },
+      {
+        title: '请求量', metric: 'service.cnt', aggs: 'sum' as const, unit: '', higherIsBetter: true,
+        tip: '请求量 = SUM(cnt)；metric_service 只统计服务入口 Span。',
+      },
+      {
+        title: 'RPS', metric: 'service.cnt', aggs: 'sum' as const, unit: '次/秒', higherIsBetter: true,
+        ratePerSecond: true,
+        tip: 'RPS = 当前时间窗口内的入口请求总数 ÷ 窗口秒数；展示的是窗口平均每秒请求数。',
+      },
+      {
+        title: '平均响应时间', metric: 'service.avgDuration', aggs: 'avg' as const, unit: 'ms', higherIsBetter: false,
+        tip: '平均响应时间 = metric_service 入口 Span 的 avgDuration 按当前窗口聚合。',
+      },
+      {
+        title: '错误请求数', metric: 'service.error', aggs: 'sum' as const, unit: '', higherIsBetter: false,
+        tip: '错误请求数 = SUM(error)，与错误率分子使用同一口径；仅统计被采集端标记为错误的服务入口请求。',
+      },
+      {
+        title: '慢调用率', metric: 'service.http.cnt', aggs: 'sum' as const, unit: '%', higherIsBetter: false,
         filters: SLOW_FILTERS,
-        tip: '慢调用 = 单次请求耗时 >3s。',
+        ratioTo: SLOW_RATE_DENOMINATOR_KEY,
+        tip: '慢调用率 = HTTP 入口请求中耗时 > 3 秒的请求数 ÷ HTTP 入口请求总数 × 100%。',
         drill: { metric: 'service.http.cnt', aggs: 'sum' as const, unit: '', valueLabel: '慢调用次数', filters: SLOW_FILTERS },
       },
     ];
+  }
+  private get kpiGroups () {
+    const items = this.kpiList;
+    return [
+      {
+        key: 'stability',
+        title: '稳定性与质量',
+        icon: 'el-icon-circle-check',
+        description: '关注服务是否可用、接口是否成功',
+        items: items.filter((item: any) =>
+          item.metric === 'service.http.availability.pct'
+          || item.metric === 'service.http.success.pct'),
+      },
+      {
+        key: 'errors',
+        title: '错误情况',
+        icon: 'el-icon-warning-outline',
+        description: '关注错误比例和错误请求规模',
+        items: items.filter((item: any) =>
+          item.metric === 'service.error.pct'
+          || item.metric === 'service.http.client_error.pct'
+          || item.metric === 'service.error'),
+      },
+      {
+        key: 'traffic',
+        title: '流量与吞吐',
+        icon: 'el-icon-data-analysis',
+        description: '关注请求规模和处理吞吐',
+        items: items.filter((item: any) => item.metric === 'service.cnt'),
+      },
+      {
+        key: 'performance',
+        title: '性能',
+        icon: 'el-icon-time',
+        description: '关注响应耗时和慢调用影响',
+        items: items.filter((item: any) =>
+          item.metric === 'service.avgDuration' || item.ratioTo),
+      },
+    ];
+  }
+
+  private kpiIcon (item: any) {
+    if (item.metric === 'service.http.availability.pct') return 'el-icon-circle-check';
+    if (item.metric === 'service.http.success.pct') return 'el-icon-success';
+    if (item.metric === 'service.error.pct') return 'el-icon-warning-outline';
+    if (item.metric === 'service.http.client_error.pct') return 'el-icon-s-operation';
+    if (item.metric === 'service.error') return 'el-icon-warning';
+    if (item.ratioTo) return 'el-icon-alarm-clock';
+    if (item.ratePerSecond) return 'el-icon-data-analysis';
+    if (item.metric === 'service.cnt') return 'el-icon-s-data';
+    if (item.metric === 'service.avgDuration') return 'el-icon-time';
+    return 'el-icon-data-analysis';
   }
 
   // 核心趋势：单图多线，每个指标一条独立 Y 轴；标题中带单位说明（因共用空 unit 避免轴单位错配）
   private get coreTrendMetrics () {
     return [
       { title: '请求量', metric: 'service.cnt', aggs: 'sum' as const },
-      { title: '异常数', metric: 'service.exception.cnt', aggs: 'sum' as const },
+      { title: '错误请求数', metric: 'service.error', aggs: 'sum' as const },
       { title: '错误率(%)', metric: 'service.error.pct', aggs: 'avg' as const },
     ];
   }
@@ -492,7 +590,7 @@ export default class MonitorTab extends Vue {
 
   private get rankMetricMap () {
     return {
-      req: { metric: 'service.http.cnt', aggs: 'sum' as const, name: '请求量' },
+      req: { metric: 'service.cnt', aggs: 'sum' as const, name: '请求量' },
       err: { metric: 'service.error', aggs: 'sum' as const, name: '错误数' },
       slow: { metric: 'service.http.cnt', aggs: 'sum' as const, name: '慢调用', filters: SLOW_FILTERS },
     };
@@ -507,6 +605,7 @@ export default class MonitorTab extends Vue {
 
   @Watch('globalTimeV2', { deep: true })
   private onGlobalTimeV2Change () {
+    this.loadServices();
     this.refreshAll();
     if (this.isSingleService) {
       this.$nextTick(() => {
@@ -527,7 +626,10 @@ export default class MonitorTab extends Vue {
   }
 
   private mounted () {
-    this.$eventBus.$on('GlobalRefresh', this, () => this.refreshAll());
+    this.$eventBus.$on('GlobalRefresh', this, () => {
+      this.loadServices();
+      this.refreshAll();
+    });
   }
 
   private beforeDestroy () {
@@ -654,25 +756,48 @@ export default class MonitorTab extends Vue {
   }
 
   private serviceIdMap: Record<string, string> = {};
+  private serviceListRequestSeq = 0;
 
   private async loadServices () {
-    const { result, error } = await toAsyncWait(ServiceApi.getServicesIds({ fromTime: '', toTime: '', ignoreTime: 1 }));
+    const requestSeq = ++this.serviceListRequestSeq;
+    const { fromTime, toTime } = this.timeParams;
+    if (!fromTime || !toTime) {
+      return;
+    }
+    // 与链路追踪筛选侧栏使用同一来源：仅查询当前时间窗口内真实出现过的入口链路服务。
+    // 不再读取 ignoreTime=1 的全量 meta_service，避免历史、临时或误采集服务污染下拉列表。
+    const { result, error } = await toAsyncWait(ApmApi.getSpanParams({
+      fromTime,
+      toTime,
+      componentType: 'service.trace',
+      queryParams: ['service'],
+    }));
+    if (requestSeq !== this.serviceListRequestSeq) {
+      return;
+    }
     if (!error && result) {
-      const { data = [] } = result;
-      if (Array.isArray(data)) {
-        this.serviceOptions = data.map((t: any) => ({ label: t.name, value: t.name }));
-        // 保留 name→id 映射供单服务嵌入 JVM 页使用（服务详情页以 serviceId 查询），不污染全局 store
-        this.serviceIdMap = {};
-        data.forEach((t: any) => {
-          const name = t.name || t.service || '';
-          const id = t.id || t.serviceId || t.service_id || name;
-          if (name) this.serviceIdMap[name] = id;
-        });
+      const serviceMap = result.data?.service;
+      const entries = serviceMap && typeof serviceMap === 'object'
+        ? Object.keys(serviceMap)
+          .filter((name) => !!name && !!name.trim())
+          .map((name) => [name, String(serviceMap[name] || name)] as [string, string])
+        : [];
+      this.serviceOptions = entries.map(([name]) => ({ label: name, value: name }));
+      // 保留 name→id 映射供单服务嵌入 JVM 页使用（服务详情页以 serviceId 查询），不污染全局 store。
+      this.serviceIdMap = entries.reduce((map, [name, id]) => {
+        map[name] = id;
+        return map;
+      }, {} as Record<string, string>);
+      // 时间窗口变化后，已选服务若不再有链路数据，则回到全局视图，避免保留不可见的幽灵筛选条件。
+      if (this.selectedService && !this.serviceIdMap[this.selectedService]) {
+        this.selectedService = '';
+        this.refreshAll();
       }
     }
   }
 
-  // KPI 卡：一次 /cockpit/kpiSummary 拉全部卡片的今日/昨日聚合值
+  // KPI 卡：按 kpiGroups 分组分别调用 /cockpit/kpiSummary（每组一次请求，并行发起），
+  // 组内存在 ratioTo 卡片（慢调用率）时同组携带其分母「入口HTTP请求数」查询项。
   private async loadKpis () {
     const window = this.trendWindow;
     if (!window) {
@@ -680,24 +805,45 @@ export default class MonitorTab extends Vue {
     }
     this.kpiLoading = true;
     try {
-      // 慢调用随 kpiSummary 一起返回：item 上带 filters（durationRange='3000ms+'），
-      // 服务端下推到 SQL WHERE，SUM(cnt) 即真实的 >3s 慢请求总数
-      const items = this.kpiList.map((k) => ({ key: k.title, metric: k.metric, aggs: k.aggs, filters: (k as any).filters }));
-      const rows = await fetchKpiSummary(window, items);
+      const groupRequests = this.kpiGroups.map((group: any) => {
+        const items = group.items.map((k: any) => ({
+          key: k.title,
+          metric: k.metric,
+          aggs: k.aggs,
+          filters: k.filters,
+        }));
+        if (group.items.some((k: any) => k.ratioTo === SLOW_RATE_DENOMINATOR_KEY)) {
+          items.push({ key: SLOW_RATE_DENOMINATOR_KEY, metric: 'service.http.cnt', aggs: 'sum' as const, filters: INBOUND_FILTERS });
+        }
+        return fetchKpiSummary(window, items);
+      });
+      const rows = (await Promise.all(groupRequests)).flat();
+      const raw = rows.reduce((map, row) => {
+        map[row.key] = { today: Number(row.today) || 0, yesterday: Number(row.yesterday) || 0 };
+        return map;
+      }, {} as Record<string, { today: number; yesterday: number }>);
+      const durationSeconds = Math.max(1, window.end - window.start);
       const data: Record<string, { today: number; yesterday: number }> = {};
-      rows.forEach((row) => {
-        const item = this.kpiList.find((k) => k.title === row.key);
-        // 可用性 SLA = 100 - 错误率（avg 语义下聚合后取反与逐桶取反等价）
-        const today = item && item.slaMode ? 100 - row.today : row.today;
-        const yesterday = item && item.slaMode ? 100 - row.yesterday : row.yesterday;
-        data[row.key] = { today, yesterday };
+      this.kpiList.forEach((kpi: any) => {
+        const value = raw[kpi.title] || { today: 0, yesterday: 0 };
+        let today = value.today;
+        let yesterday = value.yesterday;
+        if (kpi.ratePerSecond) {
+          today /= durationSeconds;
+          yesterday /= durationSeconds;
+        }
+        if (kpi.ratioTo) {
+          const denominator = raw[kpi.ratioTo] || { today: 0, yesterday: 0 };
+          today = denominator.today > 0 ? today / denominator.today * 100 : 0;
+          yesterday = denominator.yesterday > 0 ? yesterday / denominator.yesterday * 100 : 0;
+        }
+        data[kpi.title] = { today, yesterday };
       });
       this.kpiData = data;
     } finally {
       this.kpiLoading = false;
     }
   }
-
   // 趋势分组卡：资源/JVM 卡片全局隐藏（单服务时底部嵌入），仅请求依赖调用/网络
   private async loadGroupTrends () {
     const window = this.trendWindow;
@@ -758,9 +904,15 @@ export default class MonitorTab extends Vue {
     try {
       const candidates: Array<{metric:string,aggs:'sum'|'avg',filters?:MetricFilter[]}> = [];
       if (this.rankingMetric === 'req') {
-        candidates.push({metric:'service.http.cnt',aggs:'sum'},{metric:'service.rpc.cnt',aggs:'sum'},{metric:'service.db.cnt',aggs:'sum'},{metric:'service.redis.cnt',aggs:'sum'},{metric:'service.mq.cnt',aggs:'sum'},{metric:'service.remote.cnt',aggs:'sum'});
+        candidates.push(
+          { metric: 'service.http.cnt', aggs: 'sum', filters: INBOUND_FILTERS },
+          { metric: 'service.rpc.cnt', aggs: 'sum', filters: INBOUND_FILTERS },
+        );
       } else if (this.rankingMetric === 'err') {
-        candidates.push({metric:'service.http.error',aggs:'avg'},{metric:'service.rpc.error',aggs:'avg'},{metric:'service.db.error',aggs:'avg'});
+        candidates.push(
+          { metric: 'service.http.error', aggs: 'sum', filters: INBOUND_FILTERS },
+          { metric: 'service.rpc.error', aggs: 'sum', filters: INBOUND_FILTERS },
+        );
       } else {
         // 慢调用等其余指标：经 resolveDrillMetric 映射到接口级指标，
         // filters（如慢调用 durationRange='3000ms+'）随之下推
@@ -846,16 +998,15 @@ export default class MonitorTab extends Vue {
     const map: Record<string, { metric: string; aggs: string; groupBy: string }> = {
       'service.cnt': { metric: 'service.http.cnt', aggs: 'sum', groupBy: 'resource' },
       'req': { metric: 'service.http.cnt', aggs: 'sum', groupBy: 'resource' },
-      'service.error': { metric: 'service.http.error', aggs: 'avg', groupBy: 'resource' },
+      'service.error': { metric: 'service.http.error', aggs: 'sum', groupBy: 'resource' },
       'service.error.pct': { metric: 'service.http.error.pct', aggs: 'avg', groupBy: 'resource' },
-      'err': { metric: 'service.http.error', aggs: 'avg', groupBy: 'resource' },
+      'err': { metric: 'service.http.error', aggs: 'sum', groupBy: 'resource' },
       'service.exception.cnt': { metric: 'service.exception.cnt', aggs: 'sum', groupBy: 'resource' },
       'exc': { metric: 'service.exception.cnt', aggs: 'sum', groupBy: 'resource' },
     };
     const hit = map[metric];
-    if (hit) return { ...hit, filters };
-    // 兜底：未知别名按 resource 分组，aggs 为空时默认 sum
-    return { metric, aggs: aggs || 'sum', groupBy: 'resource', filters };
+    const target = hit || { metric, aggs: aggs || 'sum', groupBy: 'resource' };
+    return { ...target, filters: withInboundFilters(target.metric, filters || []) };
   }
 
   private get drillActiveSource () {
@@ -1015,8 +1166,56 @@ export default class MonitorTab extends Vue {
     }
   }
 
-.kpi-row {
-  flex-wrap: nowrap;
+.kpi-groups {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+
+  @media (max-width: 1250px) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.kpi-group {
+  min-width: 0;
+}
+
+.kpi-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.kpi-group-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-primary);
+  font-size: 14px;
+  font-weight: 600;
+
+  > i {
+    color: var(--color-text-link);
+    font-size: 16px;
+  }
+}
+
+.kpi-group-desc {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.kpi-group-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+
+  :deep(.kpi-card) {
+    margin-left: 0;
+  }
 }
 
 .section {
