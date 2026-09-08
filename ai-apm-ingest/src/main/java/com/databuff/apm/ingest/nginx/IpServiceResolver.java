@@ -6,323 +6,455 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Semaphore;
+import java.util.function.Supplier;
 
 /**
- * Resolve the caller service name from an IP via an external HTTP API.
- * <p>
- * Nginx access logs only carry caller IPs ({@code remote_addr} / {@code http_x_forwarded_for});
- * to render a real service topology (caller → callee) the IP must be mapped back to a service
- * name. The API is queried by the bare IP (a possible {@code host:port} endpoint is stripped),
- * the response provides {@code appModule} + {@code appName} which are joined into the service
- * name (e.g. {@code uletm} + {@code apm-service} = {@code uletm/apm-service}). Results are cached
- * (bounded TTL) and the bare IP is used as the fallback service identity when no endpoint is
- * configured or the call fails.
+ * Resolve caller service name from IP through an external HTTP API.
+ *
+ * <p>Features:</p>
+ * <ul>
+ *     <li>TTL cache</li>
+ *     <li>Same-IP single-flight</li>
+ *     <li>Global concurrency control for different IPs</li>
+ *     <li>Queue and wait when concurrency limit is reached</li>
+ *     <li>Successful "not found" result is cached as IP itself</li>
+ *     <li>HTTP/network failures are not cached</li>
+ * </ul>
  */
 public final class IpServiceResolver {
 
     private static final Logger log = LoggerFactory.getLogger(IpServiceResolver.class);
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    /** Default TTL for a resolved IP → service mapping (1 hour). */
+    /** Default cache TTL: 1 hour. */
     private static final long DEFAULT_TTL_MS = 60L * 60L * 1000L;
+
+    /** Maximum number of cache entries. */
     private static final int DEFAULT_MAX_SIZE = 50_000;
+
+    /** HTTP connect timeout. */
     private static final int CONNECT_TIMEOUT_MS = 1_000;
+
+    /** HTTP read timeout. */
     private static final int READ_TIMEOUT_MS = 1_500;
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+    /** Maximum number of remote requests executing concurrently. */
+    private static final int DEFAULT_MAX_CONCURRENT_REQUESTS = 32;
 
     private final String endpoint;
     private final String singleFieldName;
     private final Cache cache;
+    private final Semaphore semaphore;
 
     public IpServiceResolver(String endpoint, String singleFieldName) {
-        this(endpoint, singleFieldName, DEFAULT_TTL_MS, DEFAULT_MAX_SIZE);
+        this(endpoint, singleFieldName, DEFAULT_TTL_MS, DEFAULT_MAX_SIZE, DEFAULT_MAX_CONCURRENT_REQUESTS);
     }
 
     public IpServiceResolver(String endpoint, String singleFieldName, long ttlMs, int maxSize) {
+        this(endpoint, singleFieldName, ttlMs, maxSize, DEFAULT_MAX_CONCURRENT_REQUESTS);
+    }
+
+    public IpServiceResolver(String endpoint, String singleFieldName, long ttlMs, int maxSize, int maxConcurrentRequests) {
         this.endpoint = normalizeEndpoint(endpoint);
         this.singleFieldName = singleFieldName;
         this.cache = this.endpoint == null ? null : new Cache(ttlMs, maxSize);
+        this.semaphore = new Semaphore(Math.max(1, maxConcurrentRequests), true);
     }
 
     /**
-     * Resolve the service name for a caller host. Accepts a bare IP or an {@code ip:port}
-     * endpoint; the API is always queried by the bare IP only. Lookup hits the cache first and
-     * only calls the API on a miss.
+     * Resolve service name.
      *
-     * @param host raw caller address (bare IP or {@code ip:port})
-     * @return service name (e.g. {@code uletm-apm-service}) if resolved; otherwise the bare IP
+     * @param host bare IP, IP:port, IPv6 or [IPv6]:port
+     * @return resolved service name, otherwise IP itself
      */
     public String resolve(String host) {
         if (host == null || host.isBlank()) {
             return host;
         }
-        String key = bareIp(host.trim());
-        if (key == null || key.isBlank()) {
-            return host.trim(); // not an IP:port / IP shape → keep as-is
+        String ip = bareIp(host.trim());
+        if (ip == null || ip.isBlank()) {
+            return host.trim();
         }
         if (cache == null) {
-            // No endpoint configured → fall back to the IP as the service identity.
-            return key;
+            return ip;
         }
-        String cached = cache.get(key);
-        if (cached != null) {
-            return cached;
-        }
-        String resolved = fetchRemote(key);
-        if (resolved == null || resolved.isBlank()) {
-            resolved = key; // fallback to IP
-        }
-        cache.put(key, resolved);
-        return resolved;
+        return cache.getOrLoad(ip, () -> fetchRemote(ip));
     }
 
     /**
-     * Strip a trailing port from {@code ip:port}, returning the bare IP. A value with no port is
-     * returned unchanged; a non-IP/port shape is returned as-is.
+     * Remote query with global concurrency control.
+     *
+     * <p>When concurrency is full, acquire() waits instead of skipping the query.</p>
      */
-    static String bareIp(String host) {
-        if (host == null || host.isBlank()) {
-            return host;
+    private FetchResult fetchRemote(String ip) {
+        if (!isIpAddress(ip)) {
+            return FetchResult.success(ip);
         }
-        String v = host.trim();
-        // IPv6 with brackets like [::1]:8080 → strip brackets.
-        if (v.startsWith("[")) {
-            int close = v.indexOf(']');
-            if (close > 0) {
-                return v.substring(0, close + 1);
-            }
-            return v;
-        }
-        int colon = v.lastIndexOf(':');
-        if (colon > 0) {
-            String ipPart = v.substring(0, colon);
-            String portPart = v.substring(colon + 1);
-            // Only strip when the remainder is purely numeric (a port).
-            if (!portPart.isEmpty() && portPart.chars().allMatch(Character::isDigit)) {
-                return ipPart;
-            }
-        }
-        return v;
-    }
-
-    /**
-     * Whether a value is a plain IP address (IPv4 or IPv6), which is not a real service name.
-     * Used to avoid registering caller IPs into the service catalog.
-     */
-    public static boolean isIpAddress(String value) {
-        if (value == null || value.isBlank()) {
-            return false;
-        }
-        String v = value.trim();
-        // IPv4: digits and dots only, e.g. 172.25.186.89
-        if (v.chars().allMatch(c -> c == '.' || (c >= '0' && c <= '9'))) {
-            return true;
-        }
-        // IPv6: contains a colon (e.g. ::1, fe80::a:b). A host:port (e.g. 1.2.3.4:8080)
-        // is an endpoint, not a service name, so also treat it as non-service.
-        return v.contains(":");
-    }
-
-    /**
-     * Strip a trailing {@code -group} suffix from a service name, e.g.
-     * {@code tms-expressmsg-group} → {@code tms-expressmsg}. No-op when the name does not end
-     * with {@code -group} (IPs and other names are left unchanged).
-     */
-    public static String normalizeServiceName(String serviceName) {
-        if (serviceName == null || serviceName.isBlank()) {
-            return serviceName;
-        }
-        String trimmed = serviceName.trim();
-        if (trimmed.endsWith("-group")) {
-            return trimmed.substring(0, trimmed.length() - "-group".length());
-        }
-        return trimmed;
-    }
-
-    /**
-     * Call the external API: {@code GET <endpoint>?ip=<bareIp>}, parse the JSON object and build
-     * the service name from {@code appModule} + {@code appName}. Falls back to
-     * {@link #singleFieldName} when those are absent.
-     */
-    private String fetchRemote(String bareIp) {
-        // 验证 bareIp 是否为有效的 IP 地址格式，如果不是则直接返回 null
-        if (!isIpAddress(bareIp)) {
-            log.debug("Invalid IP format for: {}, skipping API call", bareIp);
-            return null;
-        }
-        HttpURLConnection conn = null;
+        boolean acquired = false;
         try {
-            String urlStr = endpoint + (endpoint.contains("?") ? "&" : "?") + "ip=" + URLEncoder.encode(bareIp, StandardCharsets.UTF_8);
-            conn = (HttpURLConnection) new URL(urlStr).openConnection();
-            conn.setRequestMethod("GET");
-            conn.setConnectTimeout(CONNECT_TIMEOUT_MS);
-            conn.setReadTimeout(READ_TIMEOUT_MS);
-            conn.setRequestProperty("Accept", "application/json");
-            int code = conn.getResponseCode();
-            if (code != HttpURLConnection.HTTP_OK) {
-                log.warn("IpServiceResolver endpoint returned HTTP {} for ip={}", code, bareIp);
-                return null;
-            }
-            String body = readBody(conn);
-            if (body == null || body.isBlank()) {
-                return null;
-            }
-            return extractServiceName(body);
-        } catch (Exception e) {
-            log.warn("IpServiceResolver call failed for ip={}: {}", bareIp, e.getMessage());
-            return null;
+            semaphore.acquire();
+            acquired = true;
+            return doFetch(ip);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("IpServiceResolver interrupted while waiting for permit, ip={}", ip);
+            return FetchResult.failure();
         } finally {
-            if (conn != null) {
-                conn.disconnect();
+            if (acquired) {
+                semaphore.release();
             }
         }
     }
 
     /**
-     * Parse the JSON response and produce a service name. Preferred: {@code appModule}/{@code appName}
-     * (e.g. {@code uletm/apm-service}). Fallback: the single configured field, then the whole
-     * trimmed response.
+     * Execute actual HTTP request.
+     */
+    private FetchResult doFetch(String ip) {
+        long startedAt = System.nanoTime();
+        HttpURLConnection connection = null;
+        try {
+            String url = endpoint + (endpoint.contains("?") ? "&" : "?") + "ip=" + URLEncoder.encode(ip, StandardCharsets.UTF_8);
+            log.debug("IpServiceResolver querying ip={}, endpoint={}", ip, endpoint);
+            connection = (HttpURLConnection) new URL(url).openConnection();
+            connection.setRequestMethod("GET");
+            connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
+            connection.setReadTimeout(READ_TIMEOUT_MS);
+            connection.setRequestProperty("Accept", "application/json");
+            int status = connection.getResponseCode();
+            if (status != HttpURLConnection.HTTP_OK) {
+                log.warn("IpServiceResolver HTTP {}, ip={}, durationMs={}", status, ip, elapsedMs(startedAt));
+                return FetchResult.failure();
+            }
+            String body = readBody(connection);
+            if (body == null || body.isBlank()) {
+                log.debug("IpServiceResolver no service found, cache ip itself, ip={}, durationMs={}", ip, elapsedMs(startedAt));
+                return FetchResult.success(ip);
+            }
+            String serviceName = extractServiceName(body);
+            if (serviceName == null || serviceName.isBlank()) {
+                log.debug("IpServiceResolver service not found, cache ip itself, ip={}, durationMs={}", ip, elapsedMs(startedAt));
+                return FetchResult.success(ip);
+            }
+            serviceName = normalizeServiceName(serviceName);
+            log.debug("IpServiceResolver resolved ip={}, service={}, durationMs={}", ip, serviceName, elapsedMs(startedAt));
+            return FetchResult.success(serviceName);
+        } catch (Exception e) {
+            log.warn("IpServiceResolver request failed, ip={}, durationMs={}, error={}", ip, elapsedMs(startedAt), e.getMessage());
+            return FetchResult.failure();
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
+        }
+    }
+
+    /**
+     * Parse response.
+     *
+     * <p>Preferred format:</p>
+     *
+     * <pre>
+     * {
+     *   "appModule": "uletm",
+     *   "appName": "apm-service"
+     * }
+     * </pre>
+     *
+     * <p>Result: uletm/apm-service</p>
      */
     private String extractServiceName(String body) {
         try {
             JsonNode root = MAPPER.readTree(body);
             String module = textOrNull(root, "appModule");
             String appName = textOrNull(root, "appName");
-            if (module != null && !module.isBlank() && appName != null && !appName.isBlank()) {
+            if (hasText(module) && hasText(appName)) {
                 return module.trim() + "/" + appName.trim();
             }
-            if (module != null && !module.isBlank()) {
+            if (hasText(module)) {
                 return module.trim();
             }
-            if (appName != null && !appName.isBlank()) {
+            if (hasText(appName)) {
                 return appName.trim();
             }
-        } catch (Exception e) {
-            log.warn("IpServiceResolver: cannot parse JSON response: {}", e.getMessage());
-        }
-        // Fallback to a single configured field (legacy).
-        if (singleFieldName != null && !singleFieldName.isBlank()) {
-            String single = extractField(body, singleFieldName);
-            if (single != null && !single.isBlank()) {
-                return single.trim();
+            if (hasText(singleFieldName)) {
+                String value = textOrNull(root, singleFieldName);
+                if (hasText(value)) {
+                    return value.trim();
+                }
             }
+            return null;
+        } catch (Exception e) {
+            log.warn("IpServiceResolver cannot parse response: {}", e.getMessage());
+            throw new IllegalStateException("Cannot parse resolver response", e);
         }
-        // No usable service name in the response → null, so the caller falls back to the IP.
-        return null;
     }
 
     private static String textOrNull(JsonNode root, String field) {
+        if (root == null || field == null) {
+            return null;
+        }
         JsonNode node = root.get(field);
         return node == null || node.isNull() ? null : node.asText();
     }
 
-    /** Minimal extraction of a string JSON field (used as a fallback when Jackson fails). */
-    private String extractField(String body, String field) {
-        String needle = "\"" + field + "\"";
-        int idx = body.indexOf(needle);
-        if (idx < 0) {
-            return null;
-        }
-        int colon = body.indexOf(':', idx + needle.length());
-        if (colon < 0) {
-            return null;
-        }
-        int start = colon + 1;
-        while (start < body.length() && Character.isWhitespace(body.charAt(start))) {
-            start++;
-        }
-        if (start < body.length() && body.charAt(start) == '"') {
-            int end = body.indexOf('"', start + 1);
-            if (end > start) {
-                return body.substring(start + 1, end);
-            }
-            return null;
-        }
-        int end = start;
-        while (end < body.length() && body.charAt(end) != ',' && body.charAt(end) != '}' && body.charAt(end) != ' ') {
-            end++;
-        }
-        return body.substring(start, end);
+    private static boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 
-    private static String readBody(HttpURLConnection conn) throws java.io.IOException {
-        try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
-            StringBuilder sb = new StringBuilder();
+    /**
+     * Normalize host into bare IP.
+     *
+     * <pre>
+     * 10.1.1.1:8080       -> 10.1.1.1
+     * [2001:db8::1]:8080  -> 2001:db8::1
+     * 2001:db8::1         -> 2001:db8::1
+     * </pre>
+     */
+    static String bareIp(String host) {
+        if (!hasText(host)) {
+            return host;
+        }
+        String value = host.trim();
+        if (value.startsWith("[")) {
+            int close = value.indexOf(']');
+            if (close > 0) {
+                return value.substring(1, close);
+            }
+            return value;
+        }
+        int firstColon = value.indexOf(':');
+        int lastColon = value.lastIndexOf(':');
+        if (firstColon > 0 && firstColon == lastColon) {
+            String port = value.substring(lastColon + 1);
+            if (!port.isEmpty() && port.chars().allMatch(Character::isDigit)) {
+                return value.substring(0, lastColon);
+            }
+        }
+        return value;
+    }
+
+    /**
+     * Lightweight IP validation.
+     */
+    public static boolean isIpAddress(String value) {
+        if (!hasText(value)) {
+            return false;
+        }
+        String v = value.trim();
+        if (v.chars().allMatch(c -> c == '.' || (c >= '0' && c <= '9'))) {
+            return true;
+        }
+        return v.contains(":");
+    }
+
+    /**
+     * Strip trailing "-group" from service name.
+     */
+    public static String normalizeServiceName(String serviceName) {
+        if (!hasText(serviceName)) {
+            return serviceName;
+        }
+        String value = serviceName.trim();
+        return value.endsWith("-group") ? value.substring(0, value.length() - "-group".length()) : value;
+    }
+
+    private static String readBody(HttpURLConnection connection) throws IOException {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8))) {
+            StringBuilder result = new StringBuilder();
             String line;
             while ((line = reader.readLine()) != null) {
-                sb.append(line);
+                result.append(line);
             }
-            return sb.toString();
+            return result.toString();
         }
+    }
+
+    private static long elapsedMs(long startedAt) {
+        return (System.nanoTime() - startedAt) / 1_000_000L;
     }
 
     private static String normalizeEndpoint(String endpoint) {
-        if (endpoint == null) {
+        if (!hasText(endpoint)) {
             return null;
         }
-        String trimmed = endpoint.trim();
-        if (trimmed.isEmpty() || "none".equalsIgnoreCase(trimmed)) {
-            return null;
-        }
-        return trimmed;
+        String value = endpoint.trim();
+        return "none".equalsIgnoreCase(value) ? null : value;
     }
 
-    /** Minimal bounded TTL cache (bare IP → service name). */
+    /**
+     * Remote query result.
+     *
+     * <p>success=true:</p>
+     * <ul>
+     *     <li>value = serviceName when resolved</li>
+     *     <li>value = IP when service does not exist</li>
+     * </ul>
+     *
+     * <p>success=false:</p>
+     * <ul>
+     *     <li>HTTP error</li>
+     *     <li>timeout</li>
+     *     <li>connection failure</li>
+     *     <li>JSON parsing failure</li>
+     *     <li>interrupted</li>
+     * </ul>
+     */
+    private record FetchResult(boolean success, String value) {
+
+        static FetchResult success(String value) {
+            return new FetchResult(true, value);
+        }
+
+        static FetchResult failure() {
+            return new FetchResult(false, null);
+        }
+    }
+
+    /**
+     * TTL Cache + Same-IP SingleFlight.
+     *
+     * <p>Cache value is always an actual String:</p>
+     *
+     * <pre>
+     * 10.1.1.1 -> uletm/apm-service
+     *
+     * or
+     *
+     * 10.1.1.2 -> 10.1.1.2
+     * </pre>
+     */
     private static final class Cache {
+
         private final long ttlMs;
         private final int maxSize;
-        private final Map<String, Entry> store = new ConcurrentHashMap<>();
 
-        Cache(long ttlMs, int maxSize) {
+        /**
+         * Completed cache entries.
+         */
+        private final Map<String, Entry> entries = new ConcurrentHashMap<>();
+
+        /**
+         * Currently loading IPs.
+         *
+         * <p>Guarantees that the same IP has at most one remote request.</p>
+         */
+        private final Map<String, CompletableFuture<FetchResult>> loading = new ConcurrentHashMap<>();
+
+        private Cache(long ttlMs, int maxSize) {
             this.ttlMs = Math.max(1L, ttlMs);
             this.maxSize = Math.max(1, maxSize);
         }
 
-        String get(String key) {
-            Entry entry = store.get(key);
+        /**
+         * Get cached value or load from remote.
+         */
+        String getOrLoad(String key, Supplier<FetchResult> loader) {
+            String cached = get(key);
+            if (cached != null) {
+                return cached;
+            }
+            CompletableFuture<FetchResult> future = new CompletableFuture<>();
+            CompletableFuture<FetchResult> existing = loading.putIfAbsent(key, future);
+            if (existing != null) {
+                try {
+                    FetchResult result = existing.join();
+                    return result.success() ? result.value() : key;
+                } catch (RuntimeException e) {
+                    log.warn("IpServiceResolver waiting for in-flight query failed, ip={}, error={}", key, e.getMessage());
+                    return key;
+                }
+            }
+            try {
+                /*
+                 * Double-check after becoming SingleFlight owner.
+                 *
+                 * Another thread may have populated the cache immediately
+                 * before this thread became owner.
+                 */
+                cached = get(key);
+                if (cached != null) {
+                    FetchResult result = FetchResult.success(cached);
+                    future.complete(result);
+                    return cached;
+                }
+                FetchResult result = loader.get();
+                if (result.success()) {
+                    put(key, result.value());
+                }
+                future.complete(result);
+                return result.success() ? result.value() : key;
+            } catch (RuntimeException | Error e) {
+                future.completeExceptionally(e);
+                throw e;
+            } finally {
+                loading.remove(key, future);
+            }
+        }
+
+        /**
+         * Read cache.
+         *
+         * <p>Expired entries are removed lazily when accessed.</p>
+         */
+        private String get(String key) {
+            Entry entry = entries.get(key);
             if (entry == null) {
                 return null;
             }
-            if (entry.expiresAtMs < System.currentTimeMillis()) {
-                store.remove(key, entry);
+            if (entry.expireAt() <= System.currentTimeMillis()) {
+                entries.remove(key, entry);
                 return null;
             }
-            return entry.value;
+            return entry.value();
         }
 
-        void put(String key, String value) {
-            if (store.size() >= maxSize) {
+        /**
+         * Put value into cache.
+         */
+        private void put(String key, String value) {
+            if (value == null) {
+                return;
+            }
+            if (entries.size() >= maxSize) {
                 evictOne();
             }
-            store.put(key, new Entry(value, System.currentTimeMillis() + ttlMs));
+            entries.put(key, new Entry(value, System.currentTimeMillis() + ttlMs));
         }
 
+        /**
+         * Prefer removing an expired entry.
+         *
+         * <p>If no expired entry exists, remove one arbitrary entry.</p>
+         */
         private void evictOne() {
             long now = System.currentTimeMillis();
-            for (Map.Entry<String, Entry> e : store.entrySet()) {
-                if (e.getValue().expiresAtMs < now) {
-                    store.remove(e.getKey(), e.getValue());
+            for (Map.Entry<String, Entry> entry : entries.entrySet()) {
+                if (entry.getValue().expireAt() <= now && entries.remove(entry.getKey(), entry.getValue())) {
                     return;
                 }
             }
-            if (!store.isEmpty()) {
-                store.keySet().stream().findFirst().ifPresent(store::remove);
-            }
+            entries.keySet().stream().findFirst().ifPresent(entries::remove);
         }
 
         int size() {
-            return store.size();
+            return entries.size();
         }
 
-        private record Entry(String value, long expiresAtMs) {
+        int loadingSize() {
+            return loading.size();
+        }
+
+        private record Entry(String value, long expireAt) {
         }
     }
 }
