@@ -197,7 +197,7 @@ PROPERTIES (
   "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
-  "dynamic_partition.start" = "-30",
+  "dynamic_partition.start" = "-732",
   "dynamic_partition.end" = "3",
   "dynamic_partition.prefix" = "p"
 );
@@ -249,7 +249,7 @@ PROPERTIES (
   "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
-  "dynamic_partition.start" = "-30",
+  "dynamic_partition.start" = "-732",
   "dynamic_partition.end" = "3",
   "dynamic_partition.prefix" = "p"
 );
@@ -337,7 +337,7 @@ PROPERTIES (
   "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
-  "dynamic_partition.start" = "-30",
+  "dynamic_partition.start" = "-732",
   "dynamic_partition.end" = "3",
   "dynamic_partition.prefix" = "p"
 );
@@ -375,7 +375,7 @@ PROPERTIES (
   "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
-  "dynamic_partition.start" = "-30",
+  "dynamic_partition.start" = "-732",
   "dynamic_partition.end" = "3",
   "dynamic_partition.prefix" = "p"
 );
@@ -401,7 +401,7 @@ PROPERTIES (
   "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
-  "dynamic_partition.start" = "-30",
+  "dynamic_partition.start" = "-732",
   "dynamic_partition.end" = "3",
   "dynamic_partition.prefix" = "p"
 );
@@ -445,7 +445,7 @@ PROPERTIES (
   "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
-  "dynamic_partition.start" = "-30",
+  "dynamic_partition.start" = "-732",
   "dynamic_partition.end" = "3",
   "dynamic_partition.prefix" = "p"
 );
@@ -492,7 +492,7 @@ PROPERTIES (
   "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
-  "dynamic_partition.start" = "-30",
+  "dynamic_partition.start" = "-732",
   "dynamic_partition.end" = "3",
   "dynamic_partition.prefix" = "p"
 );
@@ -529,7 +529,7 @@ PROPERTIES (
   "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
-  "dynamic_partition.start" = "-30",
+  "dynamic_partition.start" = "-732",
   "dynamic_partition.end" = "3",
   "dynamic_partition.prefix" = "p"
 );
@@ -588,7 +588,7 @@ PROPERTIES (
   "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
-  "dynamic_partition.start" = "-30",
+  "dynamic_partition.start" = "-732",
   "dynamic_partition.end" = "3",
   "dynamic_partition.prefix" = "p"
 );
@@ -616,7 +616,7 @@ PROPERTIES (
   "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
-  "dynamic_partition.start" = "-30",
+  "dynamic_partition.start" = "-732",
   "dynamic_partition.end" = "3",
   "dynamic_partition.prefix" = "p"
 );
@@ -642,7 +642,7 @@ PROPERTIES (
   "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
-  "dynamic_partition.start" = "-30",
+  "dynamic_partition.start" = "-732",
   "dynamic_partition.end" = "3",
   "dynamic_partition.prefix" = "p"
 );
@@ -697,7 +697,7 @@ PROPERTIES (
   "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
-  "dynamic_partition.start" = "-30",
+  "dynamic_partition.start" = "-732",
   "dynamic_partition.end" = "3",
   "dynamic_partition.prefix" = "p"
 );
@@ -723,7 +723,7 @@ PROPERTIES (
   "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
-  "dynamic_partition.start" = "-30",
+  "dynamic_partition.start" = "-732",
   "dynamic_partition.end" = "3",
   "dynamic_partition.prefix" = "p"
 );
@@ -750,7 +750,7 @@ PROPERTIES (
   "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
-  "dynamic_partition.start" = "-30",
+  "dynamic_partition.start" = "-732",
   "dynamic_partition.end" = "3",
   "dynamic_partition.prefix" = "p"
 );
@@ -813,7 +813,7 @@ PROPERTIES (
   "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
-  "dynamic_partition.start" = "-30",
+  "dynamic_partition.start" = "-732",
   "dynamic_partition.end" = "3",
   "dynamic_partition.prefix" = "p"
 );
@@ -839,7 +839,7 @@ PROPERTIES (
   "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
-  "dynamic_partition.start" = "-30",
+  "dynamic_partition.start" = "-732",
   "dynamic_partition.end" = "3",
   "dynamic_partition.prefix" = "p"
 );
@@ -870,7 +870,7 @@ PROPERTIES (
   "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
-  "dynamic_partition.start" = "-30",
+  "dynamic_partition.start" = "-732",
   "dynamic_partition.end" = "3",
   "dynamic_partition.prefix" = "p"
 );
@@ -896,7 +896,7 @@ PROPERTIES (
   "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
-  "dynamic_partition.start" = "-30",
+  "dynamic_partition.start" = "-732",
   "dynamic_partition.end" = "3",
   "dynamic_partition.prefix" = "p"
 );
@@ -948,7 +948,7 @@ PROPERTIES (
   "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
-  "dynamic_partition.start" = "-30",
+  "dynamic_partition.start" = "-732",
   "dynamic_partition.end" = "3",
   "dynamic_partition.prefix" = "p"
 );
@@ -1005,7 +1005,7 @@ PROPERTIES (
   "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
-  "dynamic_partition.start" = "-30",
+  "dynamic_partition.start" = "-732",
   "dynamic_partition.end" = "3",
   "dynamic_partition.prefix" = "p"
 );
@@ -1060,7 +1060,7 @@ PROPERTIES (
   "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
-  "dynamic_partition.start" = "-30",
+  "dynamic_partition.start" = "-732",
   "dynamic_partition.end" = "3",
   "dynamic_partition.prefix" = "p"
 );
@@ -1086,7 +1086,7 @@ PROPERTIES (
   "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
-  "dynamic_partition.start" = "-30",
+  "dynamic_partition.start" = "-732",
   "dynamic_partition.end" = "3",
   "dynamic_partition.prefix" = "p"
 );
@@ -1119,7 +1119,7 @@ PROPERTIES (
   "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
-  "dynamic_partition.start" = "-30",
+  "dynamic_partition.start" = "-732",
   "dynamic_partition.end" = "3",
   "dynamic_partition.prefix" = "p"
 );
@@ -1151,7 +1151,7 @@ PROPERTIES (
   "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
-  "dynamic_partition.start" = "-30",
+  "dynamic_partition.start" = "-732",
   "dynamic_partition.end" = "3",
   "dynamic_partition.prefix" = "p"
 );
@@ -1632,7 +1632,7 @@ PROPERTIES (
   "replication_num" = "3",
   "dynamic_partition.enable" = "true",
   "dynamic_partition.time_unit" = "DAY",
-  "dynamic_partition.start" = "-30",
+  "dynamic_partition.start" = "-732",
   "dynamic_partition.end" = "3",
   "dynamic_partition.prefix" = "p",
   "dynamic_partition.buckets" = "3"

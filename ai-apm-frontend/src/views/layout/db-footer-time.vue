@@ -76,6 +76,7 @@
               class="time-choose-selector-option">
               {{ option.labelKey ? $t(option.labelKey) : option.label }}
             </div>
+            <div class='time-choose-selector-option time-choose-so-far cp' @click='chooseSoFarHandle'>So far</div>
           </div>
         </div>
       </div>
@@ -416,6 +417,19 @@ export default class DbFooterTime extends Vue {
     this.chooseType = TimeChooseType.SELECT;
     // 是左侧面板时间联动
     this.commitDurationChange(option);
+  }
+
+  private chooseSoFarHandle () {
+    const toTime = setDateBySeconds(new Date(), 0);
+    const fromTime = new Date(toTime);
+    fromTime.setHours(0, 0, 0, 0);
+    this.commitDurationChange({
+      label: 'Sofar',
+      duration: +toTime - +fromTime,
+      fromTime: +fromTime,
+      toTime: +toTime,
+      type: TimeChooseType.CUSTOM,
+    });
   }
 
   private chooseRecentlyOptionHandle (option: TROption, idx: number) {
