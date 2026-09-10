@@ -142,11 +142,18 @@ public final class MetricQueryBuilder {
     /**
      * Portal endTime is an exclusive upper bound; minute bucket [20:34, 20:35) is stored/queryable
      * before 20:35. {@code metric_time} mirrors {@code ts} at write time and enables partition prune
-     * on {@code PARTITION BY RANGE(metric_time)}.
+     * on {@code PARTITION BY RANGE(metric_time)}. {@code metric_time} is second-truncated, so for a
+     * whole-second-aligned window it already expresses the exact epoch-millis window and the
+     * redundant {@code ts} predicate is dropped; for non-aligned millis windows {@code ts} stays as
+     * the exact semantic filter because {@link #partitionWallClockRange} is only a prune-able
+     * superset at sub-second edges.
      */
     private static String metricTsWhere(long fromMillis, long toMillis) {
-        return "`ts` >= " + fromMillis + " AND `ts` < " + toMillis
-                + " AND " + partitionWallClockRange("metric_time", fromMillis, toMillis);
+        String wallClock = partitionWallClockRange("metric_time", fromMillis, toMillis);
+        if (fromMillis % 1000L == 0L && toMillis % 1000L == 0L) {
+            return wallClock;
+        }
+        return "`ts` >= " + fromMillis + " AND `ts` < " + toMillis + " AND " + wallClock;
     }
 
     private static String metricMinuteTsSelect() {
@@ -3847,17 +3854,17 @@ public final class MetricQueryBuilder {
     }
 
     private static String httpStatusClassPctExpr(String statusClass) {
-        return "SUM(CASE WHEN `httpCode` LIKE '" + statusClass
-                + "%' THEN `cnt` ELSE 0 END) / NULLIF(SUM(`cnt`), 0) * 100";
+        return "SUM(CASE WHEN starts_with(`httpCode`, '" + statusClass
+                + "') THEN `cnt` ELSE 0 END) / NULLIF(SUM(`cnt`), 0) * 100";
     }
 
     private static String httpServerFailureCountExpr() {
-        return "SUM(CASE WHEN `httpCode` LIKE '5%' THEN `cnt`"
-                + " WHEN `httpCode` LIKE '4%' THEN 0 ELSE `error` END)";
+        return "SUM(CASE WHEN starts_with(`httpCode`, '5') THEN `cnt`"
+                + " WHEN starts_with(`httpCode`, '4') THEN 0 ELSE `error` END)";
     }
 
     private static String httpSuccessFailureCountExpr() {
-        return "SUM(CASE WHEN `httpCode` LIKE '4%' OR `httpCode` LIKE '5%'"
+        return "SUM(CASE WHEN starts_with(`httpCode`, '4') OR starts_with(`httpCode`, '5')"
                 + " THEN `cnt` ELSE `error` END)";
     }
 
