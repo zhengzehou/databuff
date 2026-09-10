@@ -324,13 +324,13 @@ public class ApmReadRepository implements AutoCloseable {
              Statement statement = connection.createStatement();
              ResultSet rs = statement.executeQuery(sql)) {
             if (!rs.next()) {
-                return new ApmQueryModels.MetricTotalSnapshot(0, 0);
+                return new ApmQueryModels.MetricTotalSnapshot(0);
             }
             double total = rs.getDouble("metric_total");
             if (rs.wasNull()) {
                 total = 0;
             }
-            return new ApmQueryModels.MetricTotalSnapshot(total, rs.getLong("matched_rows"));
+            return new ApmQueryModels.MetricTotalSnapshot(total);
         }
     }
 

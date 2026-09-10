@@ -244,7 +244,7 @@ public class MetricQueryService {
                     : Map.of();
             String metric = String.valueOf(metricQuery.getOrDefault("metric", ""));
             if (metric.isBlank()) {
-                return new ApmQueryModels.MetricTotalSnapshot(0, 0);
+                return new ApmQueryModels.MetricTotalSnapshot(0);
             }
             long start = normalizeTime(toLong(body.get("start")));
             long end = normalizeTime(toLong(body.get("end")));
@@ -258,13 +258,13 @@ public class MetricQueryService {
                     metricDatabase, table, fieldColumn, toMillis(start), toMillis(end), filterClause);
             long queryNanos = System.nanoTime();
             ApmQueryModels.MetricTotalSnapshot snapshot = readRepository.queryMetricTotal(sql);
-            log.info("metricTotal metric={} table={} total={} matchedRows={} elapsedMs={} sql={}",
-                    metric, table, snapshot.total(), snapshot.matchedRows(),
+            log.info("metricTotal metric={} table={} total={} elapsedMs={} sql={}",
+                    metric, table, snapshot.total(),
                     (System.nanoTime() - queryNanos) / 1_000_000D, sql);
             return snapshot;
         } catch (Exception e) {
             log.error("metricTotal error metric={}", body.get("query"), e.getMessage(), e);
-            return new ApmQueryModels.MetricTotalSnapshot(0, 0);
+            return new ApmQueryModels.MetricTotalSnapshot(0);
         }
     }
 

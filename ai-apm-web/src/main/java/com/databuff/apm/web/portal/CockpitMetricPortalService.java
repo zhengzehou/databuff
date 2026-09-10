@@ -34,10 +34,7 @@ public class CockpitMetricPortalService {
 
     /** 分组查询的分组数上限（与前端旧 TOP_GROUP_LIMIT 一致）。 */
     private static final int TOP_GROUP_LIMIT = 200;
-    private static final String HTTP_AVAILABILITY_METRIC = "service.http.availability.pct";
-    private static final String HTTP_UNAVAILABILITY_METRIC = "service.http.unavailability.pct";
-    private static final String HTTP_REQUEST_COUNT_METRIC = "service.http.cnt";
-
+    private static final int DAY_SECONDS = 86400;
     public CockpitMetricPortalService(MetricQueryService metricQueryService, TrafficLightService trafficLightService) {
         this.metricQueryService = metricQueryService;
         this.trafficLightService = trafficLightService;
@@ -82,9 +79,9 @@ public class CockpitMetricPortalService {
      *
      * 并发模型：sum 语义与存在标量派生表达式的指标（加权比率 error.pct /
      * availability.pct / client_error.pct、平均耗时 avgDuration 等）按
-     * Doris 表 + 服务归属列 + filters 分组，同组指标在一次表扫描（metricFieldsTotalSql）
-     * 中返回窗口总量，避免每张卡分别查询、也避免大时间窗口下按桶 GROUP BY 的序列查询；
-     * 仅无标量表达式的 avg 指标与 JVM 单调计数器保留逐项序列路径。所有批次/窗口与
+     * Doris 表 + 服务归属列 + filters 分组，同组指标在一次表扫描（metricFieldsComparisonTotalSql）
+     * 中同时返回今日/昨日窗口总量，避免每张卡分别查询和同一批次重复扫描两个窗口；
+     * 仅 JVM 单调计数器保留逐项序列路径。所有批次/窗口与
      * 逐项查询一次提交，在 Java 虚线程（Executors.newVirtualThreadPerTaskExecutor）上并发执行。
      */
     public List<Map<String, Object>> kpiSummary(Map<String, Object> body) {
@@ -94,38 +91,36 @@ public class CockpitMetricPortalService {
         List<MetricItem> items = parseItems(body.get("items"));
         Map<String, double[]> valuesByKey = new LinkedHashMap<>();
 
-        List<MetricBatch> batches = metricBatches(items.stream().filter(item -> isBatchable(item)).toList());
-        List<MetricItem> seriesItems = items.stream().filter(item -> !isBatchable(item)).toList();
-        log.info("kpiSummary request window={}-{} items={} batches={} seriesItems={} serviceNames={}",
-                window.startSec(), window.endSec(), items.size(), batches.size(), seriesItems.size(), serviceNames);
+//        List<MetricBatch> batches = metricBatches(items);
+//        List<MetricItem> seriesItems = items.stream().filter(item -> !isBatchable(item)).toList();
+        log.info("kpiSummary request window={}-{} items={} serviceNames={}",
+                window.startSec(), window.endSec(), items.size(), serviceNames);
 
         long queryPhaseNanos = System.nanoTime();
         try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
-            // 批量标量模式：每个 batch 的今日/昨日窗口各一个并发任务（虚线程），
-            // 组内多个指标共享一次 Doris 扫描；全部任务一次提交后统一 join。
             List<CompletableFuture<Map<String, double[]>>> futures = new ArrayList<>();
-            for (MetricBatch batch : batches) {
-                CompletableFuture<Map<String, Double>> today = CompletableFuture.supplyAsync(
-                        () -> metricTotalsForBatch(batch, serviceNames,
-                                window.startSec(), window.endSec(), window.interval()),
-                        executor);
-                CompletableFuture<Map<String, Double>> yesterday = CompletableFuture.supplyAsync(
-                        () -> metricTotalsForBatch(batch, serviceNames,
-                                window.startSec() - window.durationSec(), window.startSec(), window.interval()),
-                        executor);
-                futures.add(today.thenCombine(
-                        yesterday,
-                        (todayTotals, yesterdayTotals) -> mergeBatchTotals(batch, todayTotals, yesterdayTotals)));
-            }
+//            for (MetricBatch batch : batches) {
+//                CompletableFuture<Map<String, Double>> today = CompletableFuture.supplyAsync(
+//                        () -> metricTotalsForBatch(batch, serviceNames,
+//                                window.startSec(), window.endSec(), window.interval()),
+//                        executor);
+//                CompletableFuture<Map<String, Double>> yesterday = CompletableFuture.supplyAsync(
+//                        () -> metricTotalsForBatch(batch, serviceNames,
+//                                window.startSec() - window.durationSec(), window.startSec(), window.interval()),
+//                        executor);
+//                futures.add(today.thenCombine(
+//                        yesterday,
+//                        (todayTotals, yesterdayTotals) -> mergeBatchTotals(batch, todayTotals, yesterdayTotals)));
+//            }
             // 仅无标量派生表达式的 avg 指标与 JVM 单调计数器保留逐项序列路径，同样并发
-            for (MetricItem item : seriesItems) {
+            for (MetricItem item : items) {
                 CompletableFuture<Double> today = CompletableFuture.supplyAsync(
                         () -> aggregate(item, serviceNames, window, window.startSec(), window.endSec()),
                         executor);
                 CompletableFuture<Double> yesterday = CompletableFuture.supplyAsync(
                         () -> aggregate(
                                 item, serviceNames, window,
-                                window.startSec() - window.durationSec(), window.startSec()),
+                                window.startSec() - DAY_SECONDS, window.endSec() - DAY_SECONDS),
                         executor);
                 futures.add(today.thenCombine(
                         yesterday,
@@ -140,12 +135,9 @@ public class CockpitMetricPortalService {
                 valuesByKey.putAll(future.join());
             }
         }
-        log.info("kpiSummary concurrentQueries elapsedMs={} (batchQueries={} seriesQueries={})",
-                (System.nanoTime() - queryPhaseNanos) / 1_000_000D,
-                batches.size() * 2,
-                seriesItems.size() * 2);
+        log.info("kpiSummary concurrentQueries elapsedMs={}",(System.nanoTime() - queryPhaseNanos) / 1_000_000D);
 
-        enforceAvailabilityComplement(items, valuesByKey);
+//        enforceAvailabilityComplement(items, valuesByKey);
 
         List<Map<String, Object>> result = new ArrayList<>(items.size());
         for (MetricItem item : items) {
@@ -156,11 +148,7 @@ public class CockpitMetricPortalService {
                     "yesterday", values[1]
             ));
         }
-        log.info("kpiSummary done batchQueries={} seriesQueries={} items={} elapsedMs={}",
-                batches.size() * 2,
-                seriesItems.size() * 2,
-                items.size(),
-                (System.nanoTime() - startedNanos) / 1_000_000D);
+        log.info("kpiSummary done items={} elapsedMs={}",  items.size(), (System.nanoTime() - startedNanos) / 1_000_000D);
         return result;
     }
 
@@ -170,51 +158,51 @@ public class CockpitMetricPortalService {
      * independently executed scalar queries. With no matched HTTP requests both
      * metrics retain the existing zero-value convention.
      */
-    private static void enforceAvailabilityComplement(
-            List<MetricItem> items, Map<String, double[]> valuesByKey) {
-        MetricItem availability = findMetricItem(items, HTTP_AVAILABILITY_METRIC);
-        MetricItem unavailability = findMetricItem(items, HTTP_UNAVAILABILITY_METRIC);
-        if (availability == null || unavailability == null) {
-            return;
-        }
+//    private static void enforceAvailabilityComplement(
+//            List<MetricItem> items, Map<String, double[]> valuesByKey) {
+//        MetricItem availability = findMetricItem(items, HTTP_AVAILABILITY_METRIC);
+//        MetricItem unavailability = findMetricItem(items, HTTP_UNAVAILABILITY_METRIC);
+//        if (availability == null || unavailability == null) {
+//            return;
+//        }
+//
+//        double[] availableValues = valuesByKey.get(availability.key());
+//        double[] unavailableValues = valuesByKey.get(unavailability.key());
+//        if (availableValues == null || unavailableValues == null) {
+//            return;
+//        }
+//
+//        MetricItem requestCount = items.stream()
+//                .filter(item -> HTTP_REQUEST_COUNT_METRIC.equals(item.metric()))
+//                .filter(item -> item.filters().equals(availability.filters()))
+//                .findFirst()
+//                .orElse(null);
+//        double[] requestCounts = requestCount == null ? null : valuesByKey.get(requestCount.key());
+//
+//        for (int index = 0; index < availableValues.length; index++) {
+//            boolean hasRequests = requestCounts != null && requestCounts[index] > 0D;
+//            boolean hasAvailabilityResult = availableValues[index] != 0D || unavailableValues[index] != 0D;
+//            if (hasRequests || hasAvailabilityResult) {
+//                double expected = clampPercentage(100D - availableValues[index]);
+//                if (Math.abs(unavailableValues[index] - expected) > 1e-9) {
+//                    log.warn("Correct inconsistent availability pair windowIndex={} availability={} unavailability={} expected={}",
+//                            index, availableValues[index], unavailableValues[index], expected);
+//                }
+//                unavailableValues[index] = expected;
+//            }
+//        }
+//    }
 
-        double[] availableValues = valuesByKey.get(availability.key());
-        double[] unavailableValues = valuesByKey.get(unavailability.key());
-        if (availableValues == null || unavailableValues == null) {
-            return;
-        }
-
-        MetricItem requestCount = items.stream()
-                .filter(item -> HTTP_REQUEST_COUNT_METRIC.equals(item.metric()))
-                .filter(item -> item.filters().equals(availability.filters()))
-                .findFirst()
-                .orElse(null);
-        double[] requestCounts = requestCount == null ? null : valuesByKey.get(requestCount.key());
-
-        for (int index = 0; index < availableValues.length; index++) {
-            boolean hasRequests = requestCounts != null && requestCounts[index] > 0D;
-            boolean hasAvailabilityResult = availableValues[index] != 0D || unavailableValues[index] != 0D;
-            if (hasRequests || hasAvailabilityResult) {
-                double expected = clampPercentage(100D - availableValues[index]);
-                if (Math.abs(unavailableValues[index] - expected) > 1e-9) {
-                    log.warn("Correct inconsistent availability pair windowIndex={} availability={} unavailability={} expected={}",
-                            index, availableValues[index], unavailableValues[index], expected);
-                }
-                unavailableValues[index] = expected;
-            }
-        }
-    }
-
-    private static MetricItem findMetricItem(List<MetricItem> items, String metric) {
-        return items.stream()
-                .filter(item -> metric.equals(item.metric()))
-                .findFirst()
-                .orElse(null);
-    }
-
-    private static double clampPercentage(double value) {
-        return Math.max(0D, Math.min(100D, value));
-    }
+//    private static MetricItem findMetricItem(List<MetricItem> items, String metric) {
+//        return items.stream()
+//                .filter(item -> metric.equals(item.metric()))
+//                .findFirst()
+//                .orElse(null);
+//    }
+//
+//    private static double clampPercentage(double value) {
+//        return Math.max(0D, Math.min(100D, value));
+//    }
 
     /**
      * 多指标趋势：核心趋势 / 趋势分组卡共用。
@@ -240,7 +228,8 @@ public class CockpitMetricPortalService {
                         CompletableFuture<Map<String, MetricQueryService.MetricSeriesBatchSnapshot>> yesterdayFuture =
                                 CompletableFuture.supplyAsync(
                                         () -> metricSeriesBatch(
-                                                batch, serviceNames, (window.startSec() - window.durationSec()), window.startSec(), interval),
+                                                batch, serviceNames,
+                                                window.startSec() - DAY_SECONDS, window.endSec() - DAY_SECONDS, interval),
                                         executor);
                         return new BatchSeriesValues(batch, todayFuture.join(), yesterdayFuture.join());
                     }, executor))
@@ -255,13 +244,13 @@ public class CockpitMetricPortalService {
                         current = mergedSeries(item, serviceNames, window, window.startSec(), window.endSec());
                     }
                     if (previous == null) {
-                        previous = mergedSeries(item, serviceNames, window, window.startSec() - window.durationSec(), window.startSec());
+                        previous = mergedSeries(item, serviceNames, window, window.startSec() - DAY_SECONDS, window.endSec() - DAY_SECONDS);
                     }
                     Map<String, Object> row = new LinkedHashMap<>();
                     row.put("key", item.key());
                     row.put("unit", current.unit());
                     row.put("today", toValueList(current.points()));
-                    row.put("yesterday", shiftPoints(previous.points(), window.durationSec() * 1000L));
+                    row.put("yesterday", shiftPoints(previous.points(), DAY_SECONDS * 1000L));
                     rowsByKey.put(item.key(), row);
                 }
             }
@@ -387,8 +376,8 @@ public class CockpitMetricPortalService {
         String effectiveService = service.isEmpty() ? serviceNames.get(0) : service;
         List<Map<String, Object>> todaySeries = metricGroupBucketSeries(metric, aggs, serviceNames, groupBy, effectiveService, window.startSec(), window.endSec(), window.interval(), limit, filters);
         log.info("serviceEndpoints todaySeries size={} for service={} metric={}", todaySeries.size(), effectiveService, metric);
-        long yStart = window.startSec() - window.durationSec();
-        long yEnd = window.endSec() - window.durationSec();
+        long yStart = window.startSec() - DAY_SECONDS;
+        long yEnd = window.endSec() - DAY_SECONDS;
         List<Map<String, Object>> yesterdaySeries = metricGroupBucketSeries(metric, aggs, serviceNames, groupBy, effectiveService, yStart, yEnd, window.interval(), limit, filters);
         log.info("serviceEndpoints yesterdaySeries size={} for service={} metric={}", yesterdaySeries.size(), effectiveService, metric);
         Map<String, Double> todayWeightedTotals = isWeightedRatioMetric(metric)
@@ -399,7 +388,7 @@ public class CockpitMetricPortalService {
                 ? metricTopGroupValueMap(metric, aggs, serviceNames, groupBy, effectiveService,
                         yStart, yEnd, window.interval(), limit, filters)
                 : Map.of();
-        long shiftMillis = window.durationSec() * 1000L;
+        long shiftMillis = DAY_SECONDS * 1000L;
 
         Map<String, List<TrendPoint>> todayMap = new LinkedHashMap<>();
         for (Map<String, Object> raw : todaySeries) {
@@ -478,64 +467,92 @@ public class CockpitMetricPortalService {
         return last;
     }
 
-    /** 单批标量总量：按 name→id→code 过滤变体依次尝试，首个有命中行的变体即最终值（与 directTotal 回退口径一致）。 */
-    private Map<String, Double> metricTotalsForBatch(
-            MetricBatch batch, List<String> serviceNames, long startSec, long endSec, int interval) {
-        Map<String, Double> last = Map.of();
-        int variant = 0;
-        for (List<Map<String, Object>> filters : batchFilterVariants(batch, serviceNames)) {
-            long queryNanos = System.nanoTime();
-            MetricQueryService.MetricTotalsBatchSnapshot snapshot = metricQueryService.metricTotalsBatch(
-                    buildMetricBatchQueryBody(batch, filters, startSec, endSec, interval));
-            double elapsedMs = (System.nanoTime() - queryNanos) / 1_000_000D;
-            last = snapshot.totals();
-            log.info("kpiSummary batchTotals table={} metrics={} variant={} window={}-{} matchedRows={} elapsedMs={}",
-                    batch.table(),
-                    batch.items().stream().map(MetricItem::metric).toList(),
-                    variant++,
-                    startSec,
-                    endSec,
-                    snapshot.matchedRows(),
-                    elapsedMs);
-            if (serviceNames.size() != 1 || snapshot.matchedRows() > 0) {
-                return last;
-            }
-        }
-        return last;
-    }
+//    /** 单批标量总量：按 name→id→code 过滤变体依次尝试，首个有命中行的变体即最终值（与 directTotal 回退口径一致）。 */
+//    private MetricQueryService.MetricComparisonTotalsBatchSnapshot metricTotalsForBatch(
+//            MetricBatch batch,
+//            List<String> serviceNames,
+//            Window todayWindow,
+//            Window yesterdayWindow) {
+//        MetricQueryService.MetricComparisonTotalsBatchSnapshot last =
+//                MetricQueryService.MetricComparisonTotalsBatchSnapshot.empty();
+//        Map<String, Double> todayTotals = Map.of();
+//        Map<String, Double> yesterdayTotals = Map.of();
+//        long todayMatchedRows = 0;
+//        long yesterdayMatchedRows = 0;
+//        boolean todayHit = false;
+//        boolean yesterdayHit = false;
+//        int variant = 0;
+//        for (List<Map<String, Object>> filters : batchFilterVariants(batch, serviceNames)) {
+//            long queryNanos = System.nanoTime();
+//            MetricQueryService.MetricComparisonTotalsBatchSnapshot snapshot =
+//                    metricQueryService.metricTotalsBatchComparison(
+//                            buildMetricBatchQueryBody(
+//                                    batch, filters,
+//                                    todayWindow.startSec(), todayWindow.endSec(), todayWindow.interval()),
+//                            yesterdayWindow.startSec(), yesterdayWindow.endSec());
+//            double elapsedMs = (System.nanoTime() - queryNanos) / 1_000_000D;
+//            last = snapshot;
+//            log.info("kpiSummary batchTotals table={} metrics={} variant={} todayWindow={}-{} yesterdayWindow={}-{} matchedRows={}/{} elapsedMs={}",
+//                    batch.table(),
+//                    batch.items().stream().map(MetricItem::metric).toList(),
+//                    variant++,
+//                    todayWindow.startSec(),
+//                    todayWindow.endSec(),
+//                    yesterdayWindow.startSec(),
+//                    yesterdayWindow.endSec(),
+//                    snapshot.todayMatchedRows(),
+//                    snapshot.yesterdayMatchedRows(),
+//                    elapsedMs);
+//            if (serviceNames.size() != 1) {
+//                return snapshot;
+//            }
+//            if (!todayHit && snapshot.hasTodayRows()) {
+//                todayTotals = snapshot.todayTotals();
+//                todayMatchedRows = snapshot.todayMatchedRows();
+//                todayHit = true;
+//            }
+//            if (!yesterdayHit && snapshot.hasYesterdayRows()) {
+//                yesterdayTotals = snapshot.yesterdayTotals();
+//                yesterdayMatchedRows = snapshot.yesterdayMatchedRows();
+//                yesterdayHit = true;
+//            }
+//            if (todayHit && yesterdayHit) {
+//                break;
+//            }
+//        }
+//        if (serviceNames.size() != 1) {
+//            return last;
+//        }
+//        return new MetricQueryService.MetricComparisonTotalsBatchSnapshot(
+//                todayTotals, yesterdayTotals, todayMatchedRows, yesterdayMatchedRows);
+//    }
 
     /** 批量总量按 metric 归属到批内每个 item 的 key（同批同 metric 的多个 item 共享同一总量）。 */
-    private static Map<String, double[]> mergeBatchTotals(
-            MetricBatch batch, Map<String, Double> today, Map<String, Double> yesterday) {
-        Map<String, double[]> values = new LinkedHashMap<>();
-        for (MetricItem item : batch.items()) {
-            values.put(item.key(), new double[]{
-                    today.getOrDefault(item.metric(), 0D),
-                    yesterday.getOrDefault(item.metric(), 0D)});
-        }
-        return values;
-    }
+//    private static Map<String, double[]> mergeBatchTotals(
+//            MetricBatch batch, MetricQueryService.MetricComparisonTotalsBatchSnapshot snapshot) {
+//        Map<String, double[]> values = new LinkedHashMap<>();
+//        for (MetricItem item : batch.items()) {
+//            values.put(item.key(), new double[]{
+//                    snapshot.todayTotals().getOrDefault(item.metric(), 0D),
+//                    snapshot.yesterdayTotals().getOrDefault(item.metric(), 0D)});
+//        }
+//        return values;
+//    }
 
     /**
-     * 能否走批量标量查询：sum 语义的窗口总量一次扫描 SUM 即可；存在标量派生表达式的
-     * 指标（加权比率 error.pct / availability.pct / client_error.pct、平均耗时 avgDuration
-     * 等）由 metricFieldsTotalSql 返回与文档口径一致的窗口总量，无需按时间桶 GROUP BY
-     * 出序列再聚合——大时间窗口下省掉最昂贵的序列查询。
-     * 既无 sum 语义又无标量派生表达式的 avg 指标（依赖分桶均值）以及 JVM 单调计数器
-     * （jvm.gc.* 专用增量 SQL）保留逐项路径。
+     * 能否走批量标量查询：普通字段的 sum/avg/max/min 都可以直接在窗口内聚合，
+     * 无需先按 interval 生成时间序列再由 Java 二次聚合。带标量派生表达式的指标
+     * （加权比率 error.pct / availability.pct / client_error.pct、平均耗时 avgDuration
+     * 等）同样走窗口总量 SQL。只有 JVM 单调计数器（jvm.gc.* 专用增量 SQL）保留逐项路径。
      */
-    private static boolean isBatchable(MetricItem item) {
-        MetricIdentifierParser.ParsedMetric parsed = MetricIdentifierParser.parse(item.metric());
-        if (parsed.measurement().startsWith("jvm.")) {
-            return false;
-        }
-        if ("sum".equalsIgnoreCase(item.aggs())) {
-            return true;
-        }
-        String table = MetricIdentifierParser.dorisTableName(parsed.measurement());
-        String fieldColumn = MetricIdentifierParser.toDorisFieldColumn(parsed);
-        return MetricQueryBuilder.hasDerivedScalarExpression(table, fieldColumn);
-    }
+//    private static boolean isBatchable(MetricItem item) {
+//        MetricIdentifierParser.ParsedMetric parsed = MetricIdentifierParser.parse(item.metric());
+//        String fieldColumn = MetricIdentifierParser.toDorisFieldColumn(parsed);
+//        if (MetricQueryBuilder.isJvmGcMonotonicField(fieldColumn)) {
+//            return false;
+//        }
+//        return true;
+//    }
 
     private List<List<Map<String, Object>>> batchFilterVariants(
             MetricBatch batch, List<String> serviceNames) {
@@ -618,9 +635,28 @@ public class CockpitMetricPortalService {
         if ("sum".equalsIgnoreCase(item.aggs())) {
             return directTotal(item, serviceNames, startSec, endSec);
         }
+        // 存在标量派生表达式的 avg 指标（平均耗时 avgDuration 等）同样直接按窗口总量计算：
+        // 明细行本身按分钟聚合存放，窗口均值 = SUM(sumDuration)/SUM(cnt)/1e6；若先按分钟桶
+        // GROUP BY 出"分钟均值"再对它们做简单平均，等于对不同请求量的分钟不加权（avg of avgs），
+        // 流量分布不均的时间窗内会显著偏离真实均值。
+        if (hasDerivedScalarExpression(item.metric())) {
+            return directTotal(item, serviceNames, startSec, endSec);
+        }
         // 既无 sum 语义又无标量派生表达式的 avg 指标（依赖分桶均值）保留原序列路径
         Merged merged = mergedSeries(item, serviceNames, window, startSec, endSec);
         return aggregatePoints(merged.points(), item.aggs());
+    }
+
+    /** 该 metric 是否具备窗口级标量派生表达式（如 avgDuration = SUM(sumDuration)/SUM(cnt)/1e6）。 */
+    private static boolean hasDerivedScalarExpression(String metric) {
+        try {
+            MetricIdentifierParser.ParsedMetric parsed = MetricIdentifierParser.parse(metric);
+            String table = MetricIdentifierParser.dorisTableName(parsed.measurement());
+            String fieldColumn = MetricIdentifierParser.toDorisFieldColumn(parsed);
+            return MetricQueryBuilder.hasDerivedScalarExpression(table, fieldColumn);
+        } catch (IllegalArgumentException ex) {
+            return false;
+        }
     }
 
     /**
@@ -659,9 +695,9 @@ public class CockpitMetricPortalService {
             long queryNanos = System.nanoTime();
             ApmQueryModels.MetricTotalSnapshot snapshot = metricQueryService.metricTotal(body);
             double elapsedMs = (System.nanoTime() - queryNanos) / 1_000_000D;
-            log.info("kpiSummary directTotal metric={} window={}-{} matchedRows={} elapsedMs={}",
-                    item.metric(), startSec, endSec, snapshot.matchedRows(), elapsedMs);
-            if (snapshot.matchedRows() > 0) {
+            log.info("kpiSummary directTotal metric={} window={}-{} elapsedMs={}",
+                    item.metric(), startSec, endSec, elapsedMs);
+            if (snapshot.total() > 0) {
                 return snapshot.total();
             }
             log.info("directTotal no rows, try next variant metric={} serviceNames={}", item.metric(), serviceNames);

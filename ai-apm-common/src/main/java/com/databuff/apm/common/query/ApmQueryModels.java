@@ -338,7 +338,7 @@ public final class ApmQueryModels {
     }
 
     /** 窗口内无分桶直接聚合的结果：matchedRows=0 表示无数据行（区别于真实 0 值），供上层回退重试。 */
-    public record MetricTotalSnapshot(double total, long matchedRows) {
+    public record MetricTotalSnapshot(double total) {
     }
 
     /** 按时间桶聚合出的单值计数（如每桶不健康服务数），ts 为毫秒。 */

@@ -3995,7 +3995,7 @@ public final class MetricQueryBuilder {
         String derivedExpr = derivedMetricValueExpr(table, fieldColumn);
         if (derivedExpr != null) {
             return """
-                    SELECT %s AS metric_total, COUNT(*) AS matched_rows
+                    SELECT %s AS metric_total
                     FROM %s.`%s`
                     WHERE %s
                     %s
@@ -4008,7 +4008,7 @@ public final class MetricQueryBuilder {
         }
         String column = MetricIdentifierParser.toFieldColumnName(fieldColumn);
         return """
-                SELECT SUM(`%s`) AS metric_total, COUNT(*) AS matched_rows
+                SELECT SUM(`%s`) AS metric_total
                 FROM %s.`%s`
                 WHERE %s
                 %s
@@ -4040,7 +4040,7 @@ public final class MetricQueryBuilder {
         }
         return """
                 SELECT %s,
-                       COUNT(*) AS matched_rows
+                       SUM(cnt) AS matched_rows
                 FROM %s.`%s`
                 WHERE %s
                 %s
