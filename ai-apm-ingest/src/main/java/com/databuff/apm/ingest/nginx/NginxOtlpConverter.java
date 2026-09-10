@@ -136,6 +136,7 @@ public final class NginxOtlpConverter {
         String uri = firstNonBlank(l.uri(), l.requestUri(), "unknown");
         String spanName = method + " " + uri;
         boolean error = status >= 500;
+        String nginxType = l.type() == null ? "nginx" : l.type();
 
         // --- Trace request: one SERVER HTTP span -------------------------------------------
         ResourceSpans resourceSpans = ResourceSpans.newBuilder()
@@ -167,7 +168,7 @@ public final class NginxOtlpConverter {
                                 .addAttributes(kv("body_bytes_sent", l.bodyBytesSent() == null ? "" : l.bodyBytesSent()))
                                 .addAttributes(kv("nginx.proxy_host", proxyHost == null ? "" : proxyHost))
                                 .addAttributes(kv("nginx.server_addr", l.serverAddr() == null ? "" : l.serverAddr()))
-                                .addAttributes(kv("nginx.type", l.type() == null ? "nginx" : l.type())))
+                                .addAttributes(kv("nginx.type", nginxType)))
                         .build())
                 .build();
 
@@ -193,7 +194,7 @@ public final class NginxOtlpConverter {
                 .setSeverityText(severityText)
                 .setTraceId(ByteString.copyFrom(traceId))
                 .setSpanId(ByteString.copyFrom(spanId))
-                .addAttributes(kv("nginx.type", l.type() == null ? "nginx" : l.type()))
+                .addAttributes(kv("nginx.type", nginxType))
                 .setBody(AnyValue.newBuilder().setStringValue(body))
                 .build();
         ResourceLogs resourceLogs = ResourceLogs.newBuilder()
@@ -210,11 +211,11 @@ public final class NginxOtlpConverter {
         ResourceMetrics resourceMetrics = ResourceMetrics.newBuilder()
                 .setResource(serviceResource(serviceName, l))
                 .addScopeMetrics(ScopeMetrics.newBuilder()
-                        .addMetrics(httpGauge("service.http.cnt", startNanos, 1, method, uri, fullUri, status, srcService, isResolvedName))
-                        .addMetrics(httpGauge("service.http.error", startNanos, error ? 1 : 0, method, uri, fullUri, status, srcService, isResolvedName))
-                        .addMetrics(httpGauge("service.http.slow", startNanos, durationMs >= 500 ? 1 : 0, method, uri, fullUri, status, srcService, isResolvedName))
-                        .addMetrics(httpGauge("service.http.sumDuration", startNanos, durationMs, method, uri, fullUri, status, srcService, isResolvedName))
-                        .addMetrics(httpGauge("service.http.maxDuration", startNanos, durationMs, method, uri, fullUri, status, srcService, isResolvedName)))
+                        .addMetrics(httpGauge("service.http.cnt", startNanos, 1, method, uri, fullUri, status, nginxType, srcService, isResolvedName))
+                        .addMetrics(httpGauge("service.http.error", startNanos, error ? 1 : 0, method, uri, fullUri, status, nginxType, srcService, isResolvedName))
+                        .addMetrics(httpGauge("service.http.slow", startNanos, durationMs >= 500 ? 1 : 0, method, uri, fullUri, status, nginxType, srcService, isResolvedName))
+                        .addMetrics(httpGauge("service.http.sumDuration", startNanos, durationMs, method, uri, fullUri, status, nginxType, srcService, isResolvedName))
+                        .addMetrics(httpGauge("service.http.maxDuration", startNanos, durationMs, method, uri, fullUri, status, nginxType, srcService, isResolvedName)))
                 .build();
 
         return new Converted(
@@ -225,14 +226,15 @@ public final class NginxOtlpConverter {
 
     private Metric httpGauge(String metricName, long startNanos, double value,
                              String method, String uri, String fullUri, int status,
-                             String srcService, boolean isResolvedName) {
+                             String nginxType, String srcService, boolean isResolvedName) {
         NumberDataPoint.Builder point = NumberDataPoint.newBuilder()
                 .setTimeUnixNano(startNanos)
                 .addAttributes(kv("http.method", method))
                 .addAttributes(kv("http.url", firstNonBlank(fullUri, uri)))
                 .addAttributes(kv("http.status_code", Integer.toString(status)))
                 .addAttributes(kv("isIn", "1"))
-                .addAttributes(kv("isOut", "0"));
+                .addAttributes(kv("isOut", "0"))
+                .addAttributes(kv("nginx.type", nginxType));
         // Integral counters (cnt/error/slow) must map onto BIGINT columns; durations stay double.
         if (value == Math.rint(value)) {
             point.setAsInt((long) value);

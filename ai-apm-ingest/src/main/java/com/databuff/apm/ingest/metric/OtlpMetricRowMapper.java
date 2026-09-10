@@ -52,7 +52,8 @@ public final class OtlpMetricRowMapper {
             return Optional.empty();
         }
         try {
-            String normalized = normalizeMetricName(line.metric(), OtelAttributeMaps.parse(line.resourceMeta()));
+            Map<String, String> resourceMeta = OtelAttributeMaps.parse(line.resourceMeta());
+            String normalized = normalizeMetricName(line.metric(), resourceMeta);
             MetricIdentifierParser.ParsedMetric parsed;
             try {
                 parsed = MetricIdentifierParser.parse(normalized);
@@ -60,7 +61,8 @@ public final class OtlpMetricRowMapper {
                 OtlpMetricDebugLogger.mapSkipped(line, "unsupported identifier: " + normalized);
                 return Optional.empty();
             }
-            if (!MetricSchemaRegistry.isOtlpMeasurement(parsed.measurement())) {
+            if (!MetricSchemaRegistry.isOtlpMeasurement(parsed.measurement())
+                    && !isNginxHttpMeasurement(parsed.measurement(), resourceMeta)) {
                 OtlpMetricDebugLogger.mapSkipped(line, "not otlp measurement: " + parsed.measurement());
                 return Optional.empty();
             }
@@ -211,6 +213,15 @@ public final class OtlpMetricRowMapper {
         putIfPresent(row, "srcService", attrs.get("srcService"));
         putIfPresent(row, "srcServiceId", attrs.get("srcServiceId"));
         putIfPresent(row, "srcServiceInstance", attrs.get("srcServiceInstance"));
+        row.put("sourceType", "nginx".equals(OtelAttributeMaps.firstNonBlank(attrs, "nginx.type"))
+                ? "nginx"
+                : "");
+    }
+
+    private static boolean isNginxHttpMeasurement(String measurement, Map<String, String> attributes) {
+        return "service.http".equals(measurement)
+                && attributes != null
+                && attributes.containsKey("nginx.type");
     }
 
     private static void applyMeasurementTags(Map<String, Object> row, String measurement, JsonNode node) {

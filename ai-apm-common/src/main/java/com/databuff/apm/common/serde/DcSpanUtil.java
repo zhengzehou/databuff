@@ -230,6 +230,10 @@ public final class DcSpanUtil {
             return null;
         }
         Map<String, String> tags = componentBaseTags(span);
+        Map<String, String> meta = OtelAttributeMaps.parse(span);
+        tags.put("sourceType", "nginx".equals(OtelAttributeMaps.firstNonBlank(meta, "nginx.type"))
+                ? "nginx"
+                : "");
         tags.put("httpCode", span.metaHttpStatusCode == null ? "" : String.valueOf(span.metaHttpStatusCode));
         tags.put("httpMethod", nullToEmpty(span.metaHttpMethod));
         tags.put("url", normalizeHttpUrl(span.metaHttpUrl != null && !span.metaHttpUrl.isBlank()

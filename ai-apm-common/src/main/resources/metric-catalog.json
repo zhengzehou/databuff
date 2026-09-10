@@ -513,7 +513,8 @@
         "srcService",
         "srcServiceId",
         "srcServiceInstance",
-        "url"
+        "url",
+        "sourceType"
       ],
       "fields": [
         "cnt",
@@ -545,7 +546,8 @@
         "srcService",
         "srcServiceId",
         "srcServiceInstance",
-        "url"
+        "url",
+        "sourceType"
       ],
       "include": true
     },

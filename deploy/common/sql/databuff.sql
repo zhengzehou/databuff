@@ -552,6 +552,7 @@ CREATE TABLE metric_service_http (
   `srcServiceId` VARCHAR(512),
   `srcServiceInstance` VARCHAR(512),
   `url` VARCHAR(4096),
+  `sourceType` VARCHAR(32) NOT NULL DEFAULT "" COMMENT 'request source; nginx when meta.nginx.type=nginx',
   `cnt` BIGINT SUM,
   `cpuTime` DOUBLE SUM,
   `error` BIGINT SUM,
@@ -579,9 +580,10 @@ CREATE TABLE metric_service_http (
   INDEX idx_srcService (`srcService`) USING INVERTED COMMENT 'inverted index for tag srcService',
   INDEX idx_srcServiceId (`srcServiceId`) USING INVERTED COMMENT 'inverted index for tag srcServiceId',
   INDEX idx_srcServiceInstance (`srcServiceInstance`) USING INVERTED COMMENT 'inverted index for tag srcServiceInstance',
-  INDEX idx_url (`url`) USING INVERTED COMMENT 'inverted index for tag url'
+  INDEX idx_url (`url`) USING INVERTED COMMENT 'inverted index for tag url',
+  INDEX idx_sourceType (`sourceType`) USING INVERTED COMMENT 'inverted index for tag sourceType'
 ) ENGINE=OLAP
-AGGREGATE KEY(`metric_time`, `ts`, `durationRange`, `httpCode`, `httpMethod`, `isIn`, `isOut`, `resource`, `rootComponentType`, `rootResource`, `service`, `service_id`, `service_instance`, `srcService`, `srcServiceId`, `srcServiceInstance`, `url`)
+AGGREGATE KEY(`metric_time`, `ts`, `durationRange`, `httpCode`, `httpMethod`, `isIn`, `isOut`, `resource`, `rootComponentType`, `rootResource`, `service`, `service_id`, `service_instance`, `srcService`, `srcServiceId`, `srcServiceInstance`, `url`, `sourceType`)
 PARTITION BY RANGE(`metric_time`) ()
 DISTRIBUTED BY HASH(`service_id`) BUCKETS 3
 PROPERTIES (
