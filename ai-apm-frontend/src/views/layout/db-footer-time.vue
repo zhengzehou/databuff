@@ -2,6 +2,15 @@
   <div class="time-choose-wrapper flex-h">
     <el-button
       v-if="isCustomRange"
+      @click="prevDayTimeDurationHandle"
+      :disabled="disabledPrev"
+      icon="el-icon-d-arrow-left"
+      size="mini"
+      class="time-choose-trigger time-choose-prev-day cp ml-10">
+    </el-button>
+
+    <el-button
+      v-if="isCustomRange"
       @click="prevTimeDurationHandle"
       :disabled="disabledPrev"
       icon="el-icon-arrow-left"
@@ -76,6 +85,7 @@
               class="time-choose-selector-option">
               {{ option.labelKey ? $t(option.labelKey) : option.label }}
             </div>
+            <div class='time-choose-selector-option time-choose-so-far cp' @click='chooseYesterdayHandle'>昨日</div>
             <div class='time-choose-selector-option time-choose-so-far cp' @click='chooseSoFarHandle'>So far</div>
           </div>
         </div>
@@ -89,6 +99,15 @@
       size='mini'
       icon="el-icon-arrow-right"
       class="time-choose-trigger time-choose-next cp">
+    </el-button>
+
+    <el-button
+      v-if="isCustomRange"
+      @click="nextDayTimeDurationHandle"
+      :disabled="disabledNext"
+      size='mini'
+      icon="el-icon-d-arrow-right"
+      class="time-choose-trigger time-choose-next-day cp">
     </el-button>
 
     <!-- 用于手动隐藏popover -->
@@ -432,6 +451,20 @@ export default class DbFooterTime extends Vue {
     });
   }
 
+  // 昨日：昨天 00:00 ~ 今天 00:00（昨天完整一天的数据）
+  private chooseYesterdayHandle () {
+    const toTime = setDateBySeconds(new Date(), 0);
+    toTime.setHours(0, 0, 0, 0);
+    const fromTime = new Date(+toTime - 24 * 3600 * 1000);
+    this.commitDurationChange({
+      label: '昨日',
+      duration: 24 * 3600 * 1000,
+      fromTime: +fromTime,
+      toTime: +toTime,
+      type: TimeChooseType.CUSTOM,
+    });
+  }
+
   private chooseRecentlyOptionHandle (option: TROption, idx: number) {
     this.manualApplyStatus = true;
     this.chooseType = TimeChooseType.CUSTOM;
@@ -581,6 +614,52 @@ export default class DbFooterTime extends Vue {
     })
   }
 
+  // 时间范围 向前一日：仅日期 -1，起止钟点不变（保持 duration 不变）
+  private prevDayTimeDurationHandle () {
+    this.manualApplyStatus = true
+    this.chooseType = TimeChooseType.CUSTOM
+    const fromValue = +this.timeDateForm.fromTime
+    const toValue = +this.timeDateForm.toTime
+    const duration = Math.abs(toValue - fromValue)
+    const dayMs = 24 * 3600 * 1000
+    // 距禁用下限不足一天时钳制到 [disabledFrom, disabledFrom + duration]
+    const maxDuration = Math.abs(fromValue - +this.disabledFrom)
+    const from = maxDuration > dayMs ? new Date(fromValue - dayMs) : new Date(+this.disabledFrom)
+    const to = maxDuration > dayMs ? new Date(toValue - dayMs) : new Date(+this.disabledFrom + duration)
+    this.dateShowValue = `${dayjs(from).format('YYYY-MM-DD HH:mm')} - ${dayjs(to).format('YYYY-MM-DD HH:mm')}`
+    // 追加最近时间选项 & 本地记录
+    this.commitDurationChange({
+      label: this.dateShowValue,
+      duration,
+      fromTime: +from,
+      toTime: +to,
+      type: TimeChooseType.CUSTOM,
+    })
+  }
+
+  // 时间范围 向后一日：仅日期 +1，起止钟点不变（保持 duration 不变）
+  private nextDayTimeDurationHandle () {
+    this.manualApplyStatus = true
+    this.chooseType = TimeChooseType.CUSTOM
+    const fromValue = +this.timeDateForm.fromTime
+    const toValue = +this.timeDateForm.toTime
+    const duration = Math.abs(toValue - fromValue)
+    const dayMs = 24 * 3600 * 1000
+    // 距当前时间不足一天时钳制到 [now - duration, now]，避免越过当前时间
+    const maxDuration = Math.abs(+this.initNowTime - toValue)
+    const from = maxDuration > dayMs ? new Date(fromValue + dayMs) : new Date(+this.initNowTime - duration)
+    const to = maxDuration > dayMs ? new Date(toValue + dayMs) : this.initNowTime
+    this.dateShowValue = `${dayjs(from).format('YYYY-MM-DD HH:mm')} - ${dayjs(to).format('YYYY-MM-DD HH:mm')}`
+    // 追加最近时间选项 & 本地记录
+    this.commitDurationChange({
+      label: this.dateShowValue,
+      duration,
+      fromTime: +from,
+      toTime: +to,
+      type: TimeChooseType.CUSTOM,
+    })
+  }
+
   // 更新当前时间
   private updateNowTime () {
     this.initNowTime = setDateBySeconds(new Date(), 0)
@@ -630,11 +709,17 @@ export default class DbFooterTime extends Vue {
   }
 }
 
-.time-choose-prev {
+.time-choose-prev-day {
   margin-right: -11px;
   padding: 0 8px;
   border: none;
   border-radius: 4px 0 0 4px;
+}
+.time-choose-prev {
+  margin-right: -11px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 0;
   .time-choose-icon {
     transform: rotate(90deg);
   }
@@ -646,10 +731,16 @@ export default class DbFooterTime extends Vue {
   margin-left: -1px;
   padding: 0 8px;
   border: none;
-  border-radius: 0 4px 4px 0;
+  border-radius: 0;
   .time-choose-icon {
     transform: rotate(-90deg);
   }
+}
+.time-choose-next-day {
+  margin-left: -11px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 0 4px 4px 0;
 }
 
 .time-choose-panel {
