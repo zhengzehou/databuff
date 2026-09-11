@@ -1,19 +1,19 @@
 <template>
   <div class="apm-table-cont">
     <db-table
-      showSetting
-      :queryApi='queryApi'
-      :queryParams='tableQueryParams'
-      :offsetMode='true'
-      :columnConfig='getCloumns'
-      :autoRefresh='false'
-      @on-table-inited='tableInitedHandle'
-      @on-columns-inited='columnsInitedHandle'
-      @on-columns-change='columnsChangeHandle'
-      @sort-change='getData'
-      :formatFunc='formatFunc'
-      tableKey='SERVICE_ANALYSIS_REQUEST'
-      ref='listTable'>
+        showSetting
+        :queryApi='queryApi'
+        :queryParams='tableQueryParams'
+        :offsetMode='true'
+        :columnConfig='getCloumns'
+        :autoRefresh='false'
+        @on-table-inited='tableInitedHandle'
+        @on-columns-inited='columnsInitedHandle'
+        @on-columns-change='columnsChangeHandle'
+        @sort-change='getData'
+        :formatFunc='formatFunc'
+        tableKey='SERVICE_ANALYSIS_REQUEST'
+        ref='listTable'>
 
       <template slot='resource' slot-scope="{ row }">
         <div class="flex-h-jc">
@@ -66,9 +66,9 @@
             <span>{{ row.callCnt | NumberFilter }}</span>
             <div style='width: 54px;'>
               <el-progress :width='54'
-                :percentage="row.progressValue && row.progressValue.callCnt || 0" stroke-width="2"
-                :show-text="false" stroke-linecap='butt'
-                :class='["vm", "" ]'></el-progress>
+                           :percentage="row.progressValue && row.progressValue.callCnt || 0" stroke-width="2"
+                           :show-text="false" stroke-linecap='butt'
+                           :class='["vm", "" ]'></el-progress>
             </div>
           </div>
           <span @mouseenter="showChartTooltip($event, row, 'callCnt')" @mouseleave="hideChartTooltip" class="el-icon el-icon-s-data information cphl font-16 ml-15"></span>
@@ -81,9 +81,9 @@
             <span>{{ row.avgLatency | NsFilter }}</span>
             <div style='width: 54px;'>
               <el-progress :width='54'
-                :percentage="row.progressValue && row.progressValue.avgLatency || 0" stroke-width="2"
-                :show-text="false" stroke-linecap='butt'
-                :class='["vm", "" ]'></el-progress>
+                           :percentage="row.progressValue && row.progressValue.avgLatency || 0" stroke-width="2"
+                           :show-text="false" stroke-linecap='butt'
+                           :class='["vm", "" ]'></el-progress>
             </div>
           </div>
           <span @mouseenter="showChartTooltip($event, row, 'avgLatency')" @mouseleave="hideChartTooltip" class="el-icon el-icon-s-data information cphl font-16 ml-15"></span>
@@ -94,15 +94,15 @@
         <div class="flex-h">
           <div>
             <el-progress type="circle" :width='20'
-              :percentage="row.progressValue && row.progressValue.errRate || 0" :stroke-width="3"
-              :show-text="false" stroke-linecap='butt'
-              class="vm mr-5" status='exception'></el-progress>
+                         :percentage="row.progressValue && row.progressValue.errRate || 0" :stroke-width="3"
+                         :show-text="false" stroke-linecap='butt'
+                         class="vm mr-5" status='exception'></el-progress>
             <span>{{ row.errRate | PercentFilter }}</span>
           </div>
           <span @mouseenter="showChartTooltip($event, row, 'errorRate')" @mouseleave="hideChartTooltip" class="el-icon el-icon-s-data information cphl font-16 ml-15"></span>
         </div>
       </template>
-        
+
     </db-table>
 
     <div v-if='tooltipModal' :style='tooltipPosition' class="chart-trend-tooltip">
@@ -112,15 +112,15 @@
       </div>
       <div class="tooltip-chart-wrapper" v-loading='tooltipChart.loading'>
         <basic-chart
-          ref="alarmChart"
-          :source="tooltipChart.source"
-          :minInterval="1"
-          :min="0"
-          :showLegend="false"
-          :compactGrid="true"
-          :textSmallMode="true"
-          :yAxisSplitNum="3"
-          :showEmpty="!tooltipChart.loading && !tooltipChart.source.length"/>
+            ref="alarmChart"
+            :source="tooltipChart.source"
+            :minInterval="1"
+            :min="0"
+            :showLegend="false"
+            :compactGrid="true"
+            :textSmallMode="true"
+            :yAxisSplitNum="3"
+            :showEmpty="!tooltipChart.loading && !tooltipChart.source.length"/>
       </div>
     </div>
   </div>
@@ -277,7 +277,7 @@ export default class ServiceTable extends Vue {
     this.$refs.listTable?.refresh()
   }
 
-    // 查看请求详情
+  // 查看请求详情
   private viewResourceDetailHandle (row: any) {
     const query: any = {
       ...this.$route.query,
@@ -363,7 +363,7 @@ export default class ServiceTable extends Vue {
         graphStats: [_field],
         serviceId: row.serviceId
       }
-      if (this.$route.query.dbTarget || ['service.db', 'service.redis', 'service.mq'].includes(this.componentType)) {
+      if (this.$route.query.dbTarget || ['service.db', 'service.redis', 'service.mq', 'service.remote'].includes(this.componentType)) {
         params.dbTarget = 1
       }
       const { result, error } = await toAsyncWait(ApmApi.getServiceGraph(params, this.tooltipChart.cancelTokenSource.token))

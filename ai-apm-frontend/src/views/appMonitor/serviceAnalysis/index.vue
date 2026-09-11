@@ -1,39 +1,39 @@
 <template>
   <div
-    v-loading="queryLoading"
-    class="service-analysis-cont">
+      v-loading="queryLoading"
+      class="service-analysis-cont">
     <div class="bg-color p16 service-analysis-wrapper">
       <db-tabnav
-        v-model="requestType"
-        :tabnavs="requestTypeList"
-        @on-change="toggleTabHandle"
-        class="tabnav mb-15" />
+          v-model="requestType"
+          :tabnavs="requestTypeList"
+          @on-change="toggleTabHandle"
+          class="tabnav mb-15" />
 
       <el-button v-if='hasServiceCfgModule' @click="viewSetting" size='small' type="primary" icon="el-icon-plus" class="setting-resource-btn">{{ $t('modules.views.appMonitor.serviceAnalysis.s_7c57a563') }}</el-button>
 
       <query-filter
-        v-model='queryParams'
-        :updateRoute='true'
-        :filter-list="filterList"
-        @on-change="handleChange"
-        @on-remove-tag='handleRemoveTag'
-        class="" />
+          v-model='queryParams'
+          :updateRoute='true'
+          :filter-list="filterList"
+          @on-change="handleChange"
+          @on-remove-tag='handleRemoveTag'
+          class="" />
 
       <chart-group
-        ref="chartGroup"
-        :query="_queryParams"
-        :timeParams="timeParams"
-        :componentType="requestType"
-        class="chart-group"
-        @on-refresh='durationChangeHandle' />
+          ref="chartGroup"
+          :query="_queryParams"
+          :timeParams="timeParams"
+          :componentType="requestType"
+          class="chart-group"
+          @on-refresh='durationChangeHandle' />
 
       <table-list
-        ref="tableList"
-        :queryParams="_queryParams"
-        :timeParams="timeParams"
-        :componentType="requestType"
-        @add-query="addQueryHandle"
-        class="service-analysis-list" />
+          ref="tableList"
+          :queryParams="_queryParams"
+          :timeParams="timeParams"
+          :componentType="requestType"
+          @add-query="addQueryHandle"
+          class="service-analysis-list" />
     </div>
   </div>
 </template>
@@ -124,7 +124,10 @@ export default class ServiceAnalysis extends Vue {
       ...this.queryParams,
       isIn: 1,
     }
-    if (params.dbTarget) {
+    const selectedService = this.serviceList.find((item) => item.value === params.sid)
+    // Remote virtual services are downstream targets; keep sid on the metric's serviceId dimension.
+    const isRemoteTarget = this.requestType === 'service.remote' && selectedService?.info?.virtualService
+    if (params.dbTarget || isRemoteTarget) {
       params.dbTarget = 1
     } else {
       delete params.dbTarget
@@ -215,7 +218,7 @@ export default class ServiceAnalysis extends Vue {
     const routeTabType = decodeURIComponent(String(tabType));
     return this.requestTypeList.some(item => item.value === routeTabType) ? routeTabType : '';
   }
-  
+
   private created () {
     const { sid } = this.$route.query
     this.regetGlobalTime();
@@ -318,7 +321,11 @@ export default class ServiceAnalysis extends Vue {
       const { data = [] } = result || {};
       const serviceNameIdMap: any = {}
       data.forEach((t: any) => {
-        serviceNameIdMap[t.name] = { id: t.id, type: t.service_type }
+        serviceNameIdMap[t.name] = {
+          id: t.id,
+          type: t.service_type,
+          virtualService: t.virtual_service,
+        }
       });
       this.serviceList = orderBy(Object.keys(serviceNameIdMap), [t => t.toLocaleLowerCase()], ['asc'])
           .map(t => ({
@@ -326,6 +333,7 @@ export default class ServiceAnalysis extends Vue {
             value: serviceNameIdMap[t].id,
             info: {
               type: serviceNameIdMap[t].type,
+              virtualService: serviceNameIdMap[t].virtualService,
               texts: ['服务类型：' + ServiceTypeFilter(serviceNameIdMap[t].type)],
             },
           }))
