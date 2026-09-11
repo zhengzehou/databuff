@@ -2,6 +2,7 @@ package com.databuff.apm.ingest.otel;
 
 import com.databuff.apm.common.serde.DcSpanUtil;
 import com.databuff.apm.common.meta.OtelAttributeMaps;
+import com.databuff.apm.ingest.metric.DbConnectionPoolMetricNormalizer;
 import com.databuff.apm.ingest.metric.JvmOtelMetricNormalizer;
 import com.databuff.apm.common.model.DcSpan;
 import com.databuff.apm.common.trace.TraceParentUtil;
@@ -177,22 +178,16 @@ public final class OtelConverter {
                             pointCount++;
                             logRawNumberPoint(serviceName, "sum", metric.getName(),
                                     resourceMetrics.getResource().getAttributesList(), point);
-                            ConvertedMetric converted = new ConvertedMetric(serviceKey,
-                                    buildMetricLine(serviceName, serviceKey, resourceMetrics.getResource().getAttributesList(),
-                                            metric.getName(), point));
-                            out.add(converted);
-                            OtlpMetricDebugLogger.convertedLine(converted.line());
+                            appendNumberMetricLines(out, serviceKey, serviceName,
+                                    resourceMetrics.getResource().getAttributesList(), metric.getName(), point);
                         }
                     } else if (metric.hasGauge()) {
                         for (NumberDataPoint point : metric.getGauge().getDataPointsList()) {
                             pointCount++;
                             logRawNumberPoint(serviceName, "gauge", metric.getName(),
                                     resourceMetrics.getResource().getAttributesList(), point);
-                            ConvertedMetric converted = new ConvertedMetric(serviceKey,
-                                    buildMetricLine(serviceName, serviceKey, resourceMetrics.getResource().getAttributesList(),
-                                            metric.getName(), point));
-                            out.add(converted);
-                            OtlpMetricDebugLogger.convertedLine(converted.line());
+                            appendNumberMetricLines(out, serviceKey, serviceName,
+                                    resourceMetrics.getResource().getAttributesList(), metric.getName(), point);
                         }
                     } else if (metric.hasHistogram()) {
                         for (HistogramDataPoint point : metric.getHistogram().getDataPointsList()) {
@@ -206,7 +201,8 @@ public final class OtelConverter {
                                     attrs,
                                     "sum=" + point.getSum() + ",count=" + point.getCount());
                             appendHistogramMetricLines(out, serviceKey, serviceName,
-                                    resourceMetrics.getResource().getAttributesList(), metric.getName(), point);
+                                    resourceMetrics.getResource().getAttributesList(), metric.getName(),
+                                    metric.getUnit(), point);
                         }
                     } else if (metric.hasExponentialHistogram()) {
                         OtlpMetricDebugLogger.unsupportedInstrument(
@@ -236,37 +232,103 @@ public final class OtelConverter {
         OtlpMetricDebugLogger.rawOtlpPoint(serviceName, instrument, metricName, attrs, value);
     }
 
+    private void appendNumberMetricLines(
+            List<ConvertedMetric> out,
+            String serviceKey,
+            String serviceName,
+            List<KeyValue> resourceAttributes,
+            String metricName,
+            NumberDataPoint point) {
+        Map<String, String> attributes = buildAttributeMap(resourceAttributes, point.getAttributesList());
+        Number value = point.hasAsDouble() ? point.getAsDouble() : point.getAsInt();
+        if (DbConnectionPoolMetricNormalizer.isOpenTelemetryMetric(metricName)) {
+            List<DbConnectionPoolMetricNormalizer.NormalizedMetric> normalized =
+                    DbConnectionPoolMetricNormalizer.normalize(metricName, attributes, value);
+            if (normalized.isEmpty()) {
+                OtlpMetricDebugLogger.unsupportedInstrument(
+                        serviceName, metricName, "no DataBuff connection-pool scalar mapping");
+                return;
+            }
+            for (DbConnectionPoolMetricNormalizer.NormalizedMetric metric : normalized) {
+                appendConvertedMetric(out, serviceKey, serviceName, resourceAttributes,
+                        metric.identifier(), metric.value(), point.getTimeUnixNano(), point.getAttributesList());
+            }
+            return;
+        }
+        appendConvertedMetric(out, serviceKey, serviceName, resourceAttributes,
+                metricName, value, point.getTimeUnixNano(), point.getAttributesList());
+    }
+
+    private void appendConvertedMetric(
+            List<ConvertedMetric> out,
+            String serviceKey,
+            String serviceName,
+            List<KeyValue> resourceAttributes,
+            String metricName,
+            Number value,
+            long timeUnixNano,
+            List<KeyValue> pointAttributes) {
+        ConvertedMetric converted = new ConvertedMetric(serviceKey,
+                buildMetricLine(serviceName, serviceKey, resourceAttributes,
+                        metricName, value, timeUnixNano, pointAttributes));
+        out.add(converted);
+        OtlpMetricDebugLogger.convertedLine(converted.line());
+    }
+
+
     private OtlMetricLine buildMetricLine(
             String serviceName,
             String serviceKey,
             List<KeyValue> resourceAttributes,
             String metricName,
             NumberDataPoint point) {
-        long timeNanos = point.getTimeUnixNano() > 0 ? point.getTimeUnixNano() : System.nanoTime();
+        return buildMetricLine(
+                serviceName,
+                serviceKey,
+                resourceAttributes,
+                metricName,
+                point.hasAsDouble() ? point.getAsDouble() : point.getAsInt(),
+                point.getTimeUnixNano(),
+                point.getAttributesList());
+    }
+
+    private OtlMetricLine buildMetricLine(
+            String serviceName,
+            String serviceKey,
+            List<KeyValue> resourceAttributes,
+            String metricName,
+            Number value,
+            long pointTimeUnixNano,
+            List<KeyValue> pointAttributes) {
+        long timeNanos = pointTimeUnixNano > 0 ? pointTimeUnixNano : System.nanoTime();
         String serviceInstance = firstNonBlank(
-                attribute(point.getAttributesList(), "service.instance.id"),
+                attribute(pointAttributes, "service.instance.id"),
                 attribute(resourceAttributes, "service.instance.id"));
-        String threadPoolName = attribute(point.getAttributesList(), "thread.pool.name");
-        String poolName = attribute(point.getAttributesList(), "pool.name");
+        String threadPoolName = attribute(pointAttributes, "thread.pool.name");
+        String poolName = firstNonBlank(
+                attribute(pointAttributes, "pool.name"),
+                attribute(resourceAttributes, "pool.name"));
         if ((threadPoolName == null || threadPoolName.isBlank())
                 && poolName != null
                 && metricName.contains("thread")) {
             threadPoolName = poolName;
         }
+        String connectionPoolName = DbConnectionPoolMetricNormalizer.poolName(
+                buildAttributeMap(resourceAttributes, pointAttributes));
         return new OtlMetricLine(
                 timeNanos / 1_000_000L,
                 serviceKey,
                 serviceName,
                 metricName,
-                point.hasAsDouble() ? point.getAsDouble() : point.getAsInt(),
+                value,
                 serviceInstance,
                 attribute(resourceAttributes, "host.name"),
                 threadPoolName,
-                attribute(point.getAttributesList(), "object.pool.name"),
-                attribute(point.getAttributesList(), "http.connection.pool.name"),
-                attribute(point.getAttributesList(), "db.connection.pool.name"),
+                attribute(pointAttributes, "object.pool.name"),
+                attribute(pointAttributes, "http.connection.pool.name"),
+                connectionPoolName,
                 poolName,
-                buildAttributeMeta(resourceAttributes, point.getAttributesList()));
+                buildAttributeMeta(resourceAttributes, pointAttributes));
     }
 
     private void appendHistogramMetricLines(
@@ -275,29 +337,28 @@ public final class OtelConverter {
             String serviceName,
             List<KeyValue> resourceAttributes,
             String metricName,
+            String unit,
             HistogramDataPoint point) {
         Map<String, String> attributes = buildAttributeMap(resourceAttributes, point.getAttributesList());
+        if (DbConnectionPoolMetricNormalizer.isOpenTelemetryMetric(metricName)) {
+            List<DbConnectionPoolMetricNormalizer.NormalizedMetric> normalized =
+                    DbConnectionPoolMetricNormalizer.normalizeHistogram(
+                            metricName, attributes, point.getSum(), point.getCount(), unit);
+            if (normalized.isEmpty()) {
+                OtlpMetricDebugLogger.unsupportedInstrument(
+                        serviceName, metricName, "no DataBuff connection-pool histogram mapping");
+                return;
+            }
+            for (DbConnectionPoolMetricNormalizer.NormalizedMetric metric : normalized) {
+                appendConvertedMetric(out, serviceKey, serviceName, resourceAttributes,
+                        metric.identifier(), metric.value(), point.getTimeUnixNano(), point.getAttributesList());
+            }
+            return;
+        }
         for (JvmOtelMetricNormalizer.NormalizedMetric normalized
                 : JvmOtelMetricNormalizer.normalizeHistogram(metricName, attributes, point.getSum(), point.getCount())) {
-            long timeNanos = point.getTimeUnixNano() > 0 ? point.getTimeUnixNano() : System.nanoTime();
-            String serviceInstance = firstNonBlank(
-                    attribute(point.getAttributesList(), "service.instance.id"),
-                    attribute(resourceAttributes, "service.instance.id"));
-            out.add(new ConvertedMetric(serviceKey, new OtlMetricLine(
-                    timeNanos / 1_000_000L,
-                    serviceKey,
-                    serviceName,
-                    normalized.identifier(),
-                    normalized.value(),
-                    serviceInstance,
-                    attribute(resourceAttributes, "host.name"),
-                    null,
-                    null,
-                    null,
-                    null,
-                    null,
-                    buildAttributeMeta(resourceAttributes, point.getAttributesList()))));
-            OtlpMetricDebugLogger.convertedLine(out.get(out.size() - 1).line());
+            appendConvertedMetric(out, serviceKey, serviceName, resourceAttributes,
+                    normalized.identifier(), normalized.value(), point.getTimeUnixNano(), point.getAttributesList());
         }
     }
 

@@ -122,7 +122,8 @@ public final class OtlpMetricRowMapper {
     }
 
     static String normalizeMetricName(String metricName, Map<String, String> attributes) {
-        return JvmOtelMetricNormalizer.normalizeIdentifier(metricName, attributes).orElse(metricName);
+        Optional<String> normalized = DbConnectionPoolMetricNormalizer.normalizeIdentifier(metricName, attributes);
+        return normalized.orElseGet(() -> JvmOtelMetricNormalizer.normalizeIdentifier(metricName, attributes).orElse(metricName));
     }
 
     private static Map<String, String> readPointAttributes(JsonNode node) {
@@ -176,6 +177,7 @@ public final class OtlpMetricRowMapper {
             putIfPresent(row, "tag_host", line.tagHost());
             return;
         }
+        Map<String, String> attributes = OtelAttributeMaps.parse(line.resourceMeta());
         String poolTag = switch (measurement) {
             case "service.thread.pool" -> "threadPoolName";
             case "service.object.pool", "service.object.pool.get" -> "objectPoolName";
@@ -188,7 +190,10 @@ public final class OtlpMetricRowMapper {
                 case "threadPoolName" -> line.threadPoolName();
                 case "objectPoolName" -> line.objectPoolName();
                 case "httpConnectionPoolName" -> line.httpConnectionPoolName();
-                case "connectionPoolName" -> line.connectionPoolName();
+                case "connectionPoolName" -> firstNonBlank(
+                        line.connectionPoolName(),
+                        DbConnectionPoolMetricNormalizer.poolName(attributes),
+                        line.poolName());
                 default -> null;
             };
             putIfPresent(row, poolTag, poolValue);
@@ -238,11 +243,22 @@ public final class OtlpMetricRowMapper {
             default -> null;
         };
         if (poolTag != null) {
-            putIfPresent(row, poolTag, text(node, poolTag));
+            putIfPresent(row, poolTag, poolTagValue(node, poolTag));
         }
         if ("service.exception".equals(measurement)) {
             putIfPresent(row, "exceptionName", firstNonBlank(text(node, "exceptionName"), text(node, "errorType")));
         }
+    }
+
+    private static String poolTagValue(JsonNode node, String poolTag) {
+        String explicit = text(node, poolTag);
+        if (!"connectionPoolName".equals(poolTag)) {
+            return explicit;
+        }
+        return firstNonBlank(
+                explicit,
+                text(node, "poolName"),
+                DbConnectionPoolMetricNormalizer.poolName(readPointAttributes(node)));
     }
 
     private static void putIfPresent(Map<String, Object> row, String key, String value) {

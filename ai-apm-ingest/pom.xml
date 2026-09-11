@@ -165,6 +165,7 @@
                         <exclude>**/OtelConverter.class</exclude>
                         <exclude>**/OtlpMetricRowMapper.class</exclude>
                         <exclude>**/JvmOtelMetricNormalizer.class</exclude>
+                        <exclude>**/DbConnectionPoolMetricNormalizer.class</exclude>
                         <exclude>**/RemoteCallProcessor.class</exclude>
                         <exclude>**/OtlpIngestService.class</exclude>
                         <exclude>**/OtlpLogDirectWriter.class</exclude>
