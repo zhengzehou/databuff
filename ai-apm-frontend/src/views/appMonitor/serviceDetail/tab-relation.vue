@@ -269,6 +269,15 @@ export default class TabRelation extends Vue {
           { field: 'serviceInstance', label: i18n.t('modules.views.appMonitor.serviceDetail.s_8124816e') as string, labelKey: 'modules.views.appMonitor.errors.s_8124816e', minWidth: 120, handleClick: this.viewServiceInstanceHandle },
           { field: 'serviceCall', label: i18n.t('modules.views.appMonitor.relationMap.s_ae1e7b60') as string, labelKey: 'modules.views.appMonitor.relationMap.s_ae1e7b60', minWidth: 120, unit: 'count' },
         ];
+        if (this.currServices.some(t =>
+          (t.activeSize !== null && t.activeSize !== undefined)
+          || (t.idleSize !== null && t.idleSize !== undefined)
+          || (t.maxSize !== null && t.maxSize !== undefined)
+        )) {
+          currColumns.push({ field: 'activeSize', label: '最大活跃数', minWidth: 120, unit: 'count' })
+          currColumns.push({ field: 'idleSize', label: '最大空闲数', minWidth: 120, unit: 'count' })
+          currColumns.push({ field: 'maxSize', label: i18n.t('modules.views.appMonitor.serviceDetail.s_8914ac3b') as string, labelKey: 'modules.views.appMonitor.serviceDetail.s_8914ac3b', minWidth: 120, unit: 'count' })
+        }
         if (!!this.currServices.find(t => t.k8sClusterId)) {
           currColumns.push({ field: 'hostName', label: 'Node', slot: 'node', minWidth: 120, handleClick: this.viewHostDetail })
           currColumns.push({ field: 'k8sPodName', label: 'Pod', minWidth: 120 })

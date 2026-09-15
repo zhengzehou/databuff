@@ -6,6 +6,7 @@ import com.databuff.apm.common.query.ApmQueryModels.ComponentEndpointPoint;
 import com.databuff.apm.common.query.ApmQueryModels.ComponentResourceRelationPoint;
 import com.databuff.apm.common.query.ApmQueryModels.ExceptionDistPoint;
 import com.databuff.apm.common.query.ApmQueryModels.ServiceInstanceSummaryPoint;
+import com.databuff.apm.common.query.ApmQueryModels.DbConnectionPoolSummaryPoint;
 import com.databuff.apm.common.query.ApmQueryModels.MetaServicePoint;
 import com.databuff.apm.common.query.ApmQueryModels.DbDownstreamPoint;
 import com.databuff.apm.common.query.ApmQueryModels.DbEndpointPoint;
@@ -1321,26 +1322,84 @@ public class ServicePortalService {
                     metricDatabase, serviceId, from, to, instanceFilter, 200);
             summaries = readRepository.queryServiceInstanceSummaries(sql);
         } catch (Exception e) {
-            return List.of();
+            summaries = List.of();
         }
 
         final Map<String, Object> entity = traceServiceEntity;
         long serviceAlarmCount = toLong(entity.get("alarmCount"));
+        Map<String, DbConnectionPoolSummaryPoint> poolByInstance =
+                loadDbConnectionPoolSummaries(List.of(serviceId), from, to, instanceFilter);
         return summaries.stream()
-                .map(point -> toServiceInstanceRow(point, entity, serviceAlarmCount))
+                .map(point -> toServiceInstanceRow(
+                        point,
+                        entity,
+                        serviceAlarmCount,
+                        poolByInstance.get(serviceInstanceKey(serviceId, point.serviceInstance()))))
                 .toList();
+    }
+
+    /**
+     * 查询指定服务，指定时间范围内
+     */
+    private Map<String, DbConnectionPoolSummaryPoint> loadDbConnectionPoolSummaries(
+            java.util.Collection<String> serviceIds,
+            long from,
+            long to,
+            String instanceFilter) {
+        if (serviceIds == null || serviceIds.isEmpty()) {
+            return Map.of();
+        }
+        try {
+            String sql = MetricQueryBuilder.dbConnectionPoolSummarySql(
+                    metricDatabase, serviceIds, from, to, instanceFilter, 500);
+            Map<String, DbConnectionPoolSummaryPoint> result = new LinkedHashMap<>();
+            for (DbConnectionPoolSummaryPoint point : readRepository.queryDbConnectionPoolSummaries(sql)) {
+                if (point != null && !isBlank(point.serviceInstance())) {
+                    result.merge(
+                            serviceInstanceKey(point.serviceId(), point.serviceInstance()),
+                            point,
+                            ServicePortalService::mergeMaxDbConnectionPoolSummary);
+                }
+            }
+            return result;
+        } catch (Exception e) {
+            return Map.of();
+        }
+    }
+
+    private static DbConnectionPoolSummaryPoint mergeMaxDbConnectionPoolSummary(
+            DbConnectionPoolSummaryPoint current,
+            DbConnectionPoolSummaryPoint candidate) {
+        if (current == null) {
+            return candidate;
+        }
+        if (candidate == null) {
+            return current;
+        }
+        return new DbConnectionPoolSummaryPoint(
+                firstNonBlank(current.serviceId(), candidate.serviceId()),
+                firstNonBlank(current.serviceInstance(), candidate.serviceInstance()),
+                Math.max(current.activeSize(), candidate.activeSize()),
+                Math.max(current.idleSize(), candidate.idleSize()),
+                Math.max(current.maxSize(), candidate.maxSize()));
     }
 
     private Map<String, Object> toServiceInstanceRow(
             ServiceInstanceSummaryPoint point,
             Map<String, Object> traceServiceEntity,
-            long serviceAlarmCount) {
+            long serviceAlarmCount,
+            DbConnectionPoolSummaryPoint pool) {
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("serviceInstance", point.serviceInstance());
         row.put("hostName", unknownIfBlank(point.hostName()));
         row.put("hostIp", unknownIfBlank(firstNonBlank(point.hostId(), point.hostName())));
         row.put("alarmCount", serviceAlarmCount);
         row.put("serviceCall", point.callCount());
+        if (pool != null) {
+            row.put("activeSize", pool.activeSize());
+            row.put("idleSize", pool.idleSize());
+            row.put("maxSize", pool.maxSize());
+        }
         putIfPresent(row, "k8sNamespace", point.k8sNamespace());
         putIfPresent(row, "k8sPodName", point.k8sPodName());
         putIfPresent(row, "k8sClusterId", point.k8sClusterId());
@@ -1348,6 +1407,12 @@ public class ServicePortalService {
         putIfPresent(row, "pname", point.processName());
         row.put("traceServiceEntity", traceServiceEntity);
         return row;
+    }
+
+    private static String serviceInstanceKey(String serviceId, String serviceInstance) {
+        String normalizedServiceId = PortalServiceIdResolver.normalize(serviceId);
+        String normalizedInstance = serviceInstance == null ? "" : serviceInstance.trim();
+        return normalizedServiceId + "|" + normalizedInstance;
     }
 
     private static Map<String, Object> minimalTraceServiceEntity(String serviceId) {

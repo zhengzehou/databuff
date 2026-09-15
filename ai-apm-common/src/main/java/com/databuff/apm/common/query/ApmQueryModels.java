@@ -527,6 +527,15 @@ public final class ApmQueryModels {
             String processName) {
     }
 
+    /** Aggregated database connection-pool gauges for a service instance. */
+    public record DbConnectionPoolSummaryPoint(
+            String serviceId,
+            String serviceInstance,
+            double activeSize,
+            double idleSize,
+            double maxSize) {
+    }
+
     /** Row from Doris {@code meta_service} (legacy MySQL {@code dc_databuff_service} shape). */
     public record MetaServicePoint(
             String id,

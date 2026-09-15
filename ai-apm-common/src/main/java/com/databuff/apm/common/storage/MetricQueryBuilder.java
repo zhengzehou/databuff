@@ -827,6 +827,51 @@ public final class MetricQueryBuilder {
                 Math.max(1, Math.min(limit, 200)));
     }
 
+
+    /**
+     * for several caller services. */
+    public static String dbConnectionPoolSummarySql(
+            String database,
+            java.util.Collection<String> services,
+            long fromMillis,
+            long toMillis,
+            String serviceInstance,
+            int limit) {
+        String serviceFilter = buildServiceIdsInFilter(services);
+        if (serviceFilter.isBlank()) {
+            serviceFilter = " AND 1 = 0 ";
+        }
+        String serviceExpr = "COALESCE(NULLIF(`service_id`, ''), `service`)";
+        StringBuilder instanceFilter = new StringBuilder();
+        if (serviceInstance != null && !serviceInstance.isBlank()) {
+            instanceFilter.append(" AND `service_instance` = '")
+                    .append(escapeLiteral(serviceInstance.trim())).append("' ");
+        }
+        return String.format(
+                "SELECT %s AS service_id,\n"
+                        + "       `service_instance`,\n"
+                        + "       MAX(COALESCE(`activeSize`, 0)) AS active_size,\n"
+                        + "       MAX(COALESCE(`idleSize`, 0)) AS idle_size,\n"
+                        + "       MAX(COALESCE(`maxSize`, 0)) AS max_size\n"
+                        + "FROM %s.`%s`\n"
+                        + "WHERE %s\n"
+                        + "%s\n"
+                        + "%s\n"
+                        + "  AND `service_instance` IS NOT NULL\n"
+                        + "  AND `service_instance` != ''\n"
+                        + "GROUP BY %s, `service_instance`\n"
+                        + "ORDER BY service_id ASC, `service_instance` ASC\n"
+                        + "LIMIT %d\n",
+                serviceExpr,
+                database,
+                DorisTableNames.METRIC_SERVICE_DB_CONNECTION_POOL,
+                metricTsWhere(fromMillis, toMillis),
+                serviceFilter,
+                instanceFilter,
+                serviceExpr,
+                Math.max(1, Math.min(limit, 200)));
+    }
+
     public static String k8sNamespaceDistinctSql(String database, long fromMillis, long toMillis, int limit) {
         return """
                 SELECT DISTINCT `k8sNamespace` AS group_value

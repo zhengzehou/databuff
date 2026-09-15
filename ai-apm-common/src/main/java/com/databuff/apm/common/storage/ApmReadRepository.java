@@ -865,6 +865,24 @@ public class ApmReadRepository implements AutoCloseable {
         return points;
     }
 
+    public List<ApmQueryModels.DbConnectionPoolSummaryPoint> queryDbConnectionPoolSummaries(String sql)
+            throws SQLException {
+        List<ApmQueryModels.DbConnectionPoolSummaryPoint> points = new ArrayList<>();
+        try (Connection connection = connection();
+             Statement statement = connection.createStatement();
+             ResultSet rs = statement.executeQuery(sql)) {
+            while (rs.next()) {
+                points.add(new ApmQueryModels.DbConnectionPoolSummaryPoint(
+                        nullToEmpty(rs.getString("service_id")),
+                        nullToEmpty(rs.getString("service_instance")),
+                        rs.getDouble("active_size"),
+                        rs.getDouble("idle_size"),
+                        rs.getDouble("max_size")));
+            }
+        }
+        return points;
+    }
+
     public Map<String, String> queryStringMap(String sql, String keyColumn, String valueColumn) throws SQLException {
         Map<String, String> map = new LinkedHashMap<>();
         try (Connection connection = connection();
