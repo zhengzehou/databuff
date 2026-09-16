@@ -395,6 +395,22 @@ class MetricQueryBuilderTest {
     }
 
     @Test
+    void buildsDbConnectionPoolTrendSqlByMinute() {
+        String sql = MetricQueryBuilder.dbConnectionPoolTrendSql(
+                "databuff",
+                java.util.List.of("9bf61532d56eb7b5"),
+                1_780_652_100_000L,
+                1_780_655_700_000L,
+                "inst-a");
+        assertThat(sql).contains("metric_service_db_connection_pool");
+        assertThat(sql).contains("MAX(COALESCE(`activeSize`, 0)) AS metric_value");
+        assertThat(sql).contains("`service_id` IN ('9bf61532d56eb7b5')");
+        assertThat(sql).contains("`service_instance` = 'inst-a'");
+        assertThat(sql).contains("FLOOR(`ts` / 1000 / 60) * 60");
+        assertThat(sql).contains("GROUP BY epoch_sec");
+    }
+
+    @Test
     void buildsK8sNamespaceDistinctSql() {
         String sql = MetricQueryBuilder.k8sNamespaceDistinctSql("databuff", 0L, 3_600_000L, 50);
         assertThat(sql).contains("metric_service_instance");

@@ -217,10 +217,12 @@ public class ServicePortalService {
         long now = System.currentTimeMillis();
         long from = PortalTimeParser.rangeFrom(body, now - 3_600_000L);
         long to = PortalTimeParser.rangeTo(body, now);
-        int interval = intValue(body.get("interval"), 60);
+        boolean databaseTable = DorisTableNames.METRIC_SERVICE_DB.equals(table);
+        int interval = databaseTable ? 60 : intValue(body.get("interval"), 60);
         String serviceId = resolveServiceId(body);
         String srcServiceId = stringValue(body.get("srcServiceId"), null);
         String serviceInstance = stringValue(body.get("serviceInstance"), null);
+        String srcServiceInstance = stringValue(body.get("srcServiceInstance"), null);
         String resourceQuery = decodeResource(body);
         if (resourceQuery == null) {
             resourceQuery = stringValue(body.get("resourceQuery"), null);
@@ -272,6 +274,13 @@ public class ServicePortalService {
         Map<String, Number> errorRates = new LinkedHashMap<>();
         Map<String, Number> avgReadRows = new LinkedHashMap<>();
         Map<String, Number> avgUpdateRows = new LinkedHashMap<>();
+        Map<String, Double> dbSumDurationNs = new LinkedHashMap<>();
+        Map<String, Double> dbSumReadRows = new LinkedHashMap<>();
+        Map<String, Double> dbSumUpdateRows = new LinkedHashMap<>();
+        Map<String, Number> activeConnections = databaseTable && isOut != null && isOut == 1
+                ? loadDbActiveConnectionTrend(
+                        firstNonBlank(srcServiceId, serviceId), srcServiceInstance, from, to)
+                : Map.of();
 
         for (ComponentTrendBucketPoint bucket : buckets) {
             String key = String.valueOf(bucket.bucketEpochSec() * 1000L);
@@ -279,7 +288,11 @@ public class ServicePortalService {
             long err = bucket.errorCount();
             callCnts.merge(key, req, (a, b) -> a.longValue() + b.longValue());
             errorCnts.merge(key, err, (a, b) -> a.longValue() + b.longValue());
-            if (req > 0) {
+            if (databaseTable) {
+                dbSumDurationNs.merge(key, bucket.sumDurationNs(), Double::sum);
+                dbSumReadRows.merge(key, bucket.sumReadRows(), Double::sum);
+                dbSumUpdateRows.merge(key, bucket.sumUpdateRows(), Double::sum);
+            } else if (req > 0) {
                 avgLatencys.put(key, bucket.sumDurationNs() / req);
                 avgReadRows.put(key, bucket.sumReadRows() / req);
                 avgUpdateRows.put(key, bucket.sumUpdateRows() / req);
@@ -292,6 +305,17 @@ public class ServicePortalService {
                 minLatencys.merge(key, bucket.minDurationNs(), (a, b) ->
                         Math.min(a.doubleValue(), b.doubleValue()));
             }
+        }
+
+        if (databaseTable) {
+            dbSumDurationNs.forEach((key, sum) -> {
+                long req = callCnts.getOrDefault(key, 0).longValue();
+                if (req > 0) {
+                    avgLatencys.put(key, sum / req);
+                    avgReadRows.put(key, dbSumReadRows.getOrDefault(key, 0.0) / req);
+                    avgUpdateRows.put(key, dbSumUpdateRows.getOrDefault(key, 0.0) / req);
+                }
+            });
         }
 
         callCnts.forEach((key, total) -> {
@@ -309,8 +333,36 @@ public class ServicePortalService {
         data.put("errorRates", TimeSeriesFillUtil.fillStringKeyMap(errorRates, from, to, interval));
         data.put("avgReadRows", TimeSeriesFillUtil.fillStringKeyMap(avgReadRows, from, to, interval));
         data.put("avgUpdateRows", TimeSeriesFillUtil.fillStringKeyMap(avgUpdateRows, from, to, interval));
+        if (databaseTable && isOut != null && isOut == 1) {
+            data.put("activeConnections", TimeSeriesFillUtil.fillStringKeyMap(
+                    activeConnections, from, to, 60));
+        }
         data.put("details", Map.of());
         return data;
+    }
+
+    private Map<String, Number> loadDbActiveConnectionTrend(
+            String serviceId, String serviceInstance, long from, long to) {
+        if (isBlank(serviceId)) {
+            return Map.of();
+        }
+        try {
+            String sql = MetricQueryBuilder.dbConnectionPoolTrendSql(
+                    metricDatabase,
+                    metricServiceIdKeys(serviceId),
+                    from,
+                    to,
+                    serviceInstance);
+            Map<String, Number> result = new LinkedHashMap<>();
+            for (MetricSeriesPoint point : readRepository.queryMetricSeries(sql)) {
+                if (point != null) {
+                    result.put(String.valueOf(point.epochSeconds() * 1000L), point.value());
+                }
+            }
+            return result;
+        } catch (Exception e) {
+            return Map.of();
+        }
     }
 
     private static boolean isDbTargetFilter(Map<String, Object> body) {

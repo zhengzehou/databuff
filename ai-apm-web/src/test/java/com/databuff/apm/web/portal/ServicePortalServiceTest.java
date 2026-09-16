@@ -1298,8 +1298,16 @@ class ServicePortalServiceTest {
       }
       assertThat(sql).containsAnyOf("dad537de7e10e098", "mysql");
       assertThat(sql).containsAnyOf("9bf61532d56eb7b5", "service-a");
-      return List.of(new ApmQueryModels.ComponentTrendBucketPoint(
-              1_780_653_280L, "mysql", 10, 0, 5_000_000L, 8_000_000L, 1_000_000L, 100, 5));
+      return List.of(
+              new ApmQueryModels.ComponentTrendBucketPoint(
+                      1_780_653_280L, "mysql", 10, 0, 5_000_000L, 8_000_000L, 1_000_000L, 100, 5),
+              new ApmQueryModels.ComponentTrendBucketPoint(
+                      1_780_653_280L, "mysql-replica", 30, 3, 30_000_000L, 9_000_000L, 2_000_000L, 60, 15));
+    });
+    when(reader.queryMetricSeries(anyString())).thenAnswer(invocation -> {
+      String sql = invocation.getArgument(0);
+      assertThat(sql).contains("metric_service_db_connection_pool");
+      return List.of(new ApmQueryModels.MetricSeriesPoint(1_780_653_280L, 7.0));
     });
     when(reader.queryTopGroups(anyString())).thenReturn(List.of("mysql", "service-a"));
     when(reader.queryMetaServices(anyString())).thenReturn(List.of(
@@ -1316,6 +1324,13 @@ class ServicePortalServiceTest {
 
     assertThat(outbound).containsKey("callCnts");
     assertThat(outbound).containsKey("avgReadRows");
+    assertThat(outbound).containsKey("activeConnections");
+    @SuppressWarnings("unchecked")
+    Map<String, Number> avgLatencys = (Map<String, Number>) outbound.get("avgLatencys");
+    assertThat(avgLatencys.values()).contains(875_000.0);
+    @SuppressWarnings("unchecked")
+    Map<String, Number> activeConnections = (Map<String, Number>) outbound.get("activeConnections");
+    assertThat(activeConnections.values()).contains(7.0);
   }
 
   @Test

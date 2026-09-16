@@ -91,6 +91,22 @@ export default class ChartGroup extends Vue {
       tsSource: [],
     },
     {
+      title: i18n.t('modules.views.appMonitor.serviceDetail.s_2a934932') as string,
+      titleKey: 'modules.views.appMonitor.serviceDetail.s_2a934932',
+      type: 'dbConnections',
+      componentTypes: ['service.db'],
+      metrics: [{
+        inOrOut: 'isOut',
+        name: 'activeConnections',
+        nameCn: i18n.t('modules.views.appMonitor.serviceDetail.s_2a934932') as string,
+        nameCnKey: 'modules.views.appMonitor.serviceDetail.s_2a934932',
+      }],
+      unit: 'count',
+      loading: false,
+      source: [],
+      tsSource: [],
+    },
+    {
       title: i18n.t('modules.views.appMonitor.serviceCall.s_92397476') as string, titleKey: 'modules.views.appMonitor.serviceCall.s_92397476',
       metrics: [{
         inOrOut: 'isOut',

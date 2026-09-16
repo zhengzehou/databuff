@@ -872,6 +872,39 @@ public final class MetricQueryBuilder {
                 Math.max(1, Math.min(limit, 200)));
     }
 
+    public static String dbConnectionPoolTrendSql(
+            String database,
+            java.util.Collection<String> services,
+            long fromMillis,
+            long toMillis,
+            String serviceInstance) {
+        String serviceFilter = buildServiceIdsInFilter(services);
+        if (serviceFilter.isBlank()) {
+            serviceFilter = " AND 1 = 0 ";
+        }
+        String instanceFilter = "";
+        if (serviceInstance != null && !serviceInstance.isBlank()) {
+            instanceFilter = " AND `service_instance` = '"
+                    + escapeLiteral(serviceInstance.trim()) + "' ";
+        }
+        return """
+                SELECT %s AS epoch_sec,
+                       MAX(COALESCE(`activeSize`, 0)) AS metric_value
+                FROM %s.`%s`
+                WHERE %s
+                %s
+                %s
+                GROUP BY epoch_sec
+                ORDER BY epoch_sec ASC
+                """.formatted(
+                metricBucketEpochSecSelect(60),
+                database,
+                DorisTableNames.METRIC_SERVICE_DB_CONNECTION_POOL,
+                metricTsWhere(fromMillis, toMillis),
+                serviceFilter,
+                instanceFilter);
+    }
+
     public static String k8sNamespaceDistinctSql(String database, long fromMillis, long toMillis, int limit) {
         return """
                 SELECT DISTINCT `k8sNamespace` AS group_value
