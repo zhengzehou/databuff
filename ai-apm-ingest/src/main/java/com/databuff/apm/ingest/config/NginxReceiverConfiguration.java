@@ -14,12 +14,13 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class NginxReceiverConfiguration {
 
-    @Bean
+    @Bean(destroyMethod = "close")
     @Conditional(NginxKafkaEnabledCondition.class)
     IpServiceResolver ipServiceResolver(
             @Value("${ingest.nginx-kafka.ip-service-url:}") String ipServiceUrl,
-            @Value("${ingest.nginx-kafka.ip-service-name-field:serviceName}") String nameField) {
-        return new IpServiceResolver(ipServiceUrl, nameField);
+            @Value("${ingest.nginx-kafka.ip-service-name-field:serviceName}") String nameField,
+            @Value("${ingest.nginx-kafka.ip-service-max-concurrent-requests:5}") int maxConcurrentRequests) {
+        return new IpServiceResolver(ipServiceUrl, nameField, maxConcurrentRequests);
     }
 
     /**
