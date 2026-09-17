@@ -67,6 +67,20 @@ apm:
     doris-enabled: ${APM_PLATFORM_METRICS_DORIS_ENABLED:true}
     # Second 50: before PlatformMetrics flush (~:02) so gauges stamp the closed minute
     doris-sample-cron: ${APM_PLATFORM_METRICS_DORIS_SAMPLE_CRON:50 * * * * *}
+  prometheus:
+    # Server-side Prometheus HTTP API used by the service-detail CVM tab.
+    enabled: ${APM_PROMETHEUS_ENABLED:true}
+    base-url: ${APM_PROMETHEUS_BASE_URL:https://opt.uletm.com/prometheus}
+    api-prefix: ${APM_PROMETHEUS_API_PREFIX:/api/v1}
+    job: ${APM_PROMETHEUS_JOB:}
+    bearer-token: ${APM_PROMETHEUS_BEARER_TOKEN:}
+    username: ${APM_PROMETHEUS_USERNAME:}
+    password: ${APM_PROMETHEUS_PASSWORD:}
+    connect-timeout-ms: ${APM_PROMETHEUS_CONNECT_TIMEOUT_MS:3000}
+    read-timeout-ms: ${APM_PROMETHEUS_READ_TIMEOUT_MS:10000}
+    max-range-seconds: ${APM_PROMETHEUS_MAX_RANGE_SECONDS:604800}
+    max-data-points: ${APM_PROMETHEUS_MAX_DATA_POINTS:720}
+    max-concurrent-queries: ${APM_PROMETHEUS_MAX_CONCURRENT_QUERIES:6}
   security:
     seed-username: admin
     seed-password: Databuff@123

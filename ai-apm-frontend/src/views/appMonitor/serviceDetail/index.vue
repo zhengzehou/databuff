@@ -52,6 +52,7 @@ import TabThreadpool from './tab-threadpool.vue';
 import TabSql from './tab-sql.vue';
 import TabLog from './tab-log.vue';
 import TabNetwork from './tab-network.vue';
+import TabCvm from './tab-cvm.vue';
 import ApmApi from '@/api/apm';
 import { toAsyncWait } from '@/utils/common';
 import { Getter } from 'vuex-class';
@@ -72,6 +73,7 @@ import {
     'tab-sql': TabSql,
     'tab-log': TabLog,
     'tab-network': TabNetwork,
+    'tab-cvm': TabCvm,
   }
 })
 export default class ServiceDetail extends Vue {
@@ -82,11 +84,20 @@ export default class ServiceDetail extends Vue {
   // 监听上下游服务点击事件，重新获取服务详情
   @Watch('$route.query.sid')
   private async onServiceRouteQueryChange (newSid: string, oldSid: string) {
-    if (!oldSid) {
+    const currentSid = decodeURIComponent(String(newSid || ''));
+    const previousSid = decodeURIComponent(String(oldSid || ''));
+    if (!previousSid || currentSid === previousSid) {
       return
     }
     this.getServiceDetail();
     this.activeName = 'tab-relation';
+  }
+  @Watch('$route.query.activeName')
+  private onActiveRouteQueryChange (newActiveName: string) {
+    const activeName = decodeURIComponent(String(newActiveName || ''));
+    if (this.tabnavByServiceType.some(item => item.value === activeName)) {
+      this.activeName = activeName;
+    }
   }
   @Watch('globalTimeV2', { deep: true })
   private watchGlobalTime() {
@@ -108,6 +119,7 @@ export default class ServiceDetail extends Vue {
   private tabnavs: any[] = [
     { label: i18n.t('modules.views.appMonitor.serviceDetail.s_718e0b79') as string, labelKey: 'modules.views.appMonitor.serviceDetail.s_718e0b79', value: 'tab-relation' },
     { label: i18n.t('modules.views.appMonitor.resourceDetail.s_6ea1fe6b') as string, labelKey: 'modules.views.appMonitor.resourceDetail.s_6ea1fe6b', value: 'tab-baseinfo' },
+    { label: 'CVM\u6307\u6807', value: 'tab-cvm' },
     { label: i18n.t('modules.views.appMonitor.serviceDetail.s_1ff73929') as string, labelKey: 'modules.views.appMonitor.serviceDetail.s_1ff73929', value: 'tab-alarm' },
     { label: i18n.t('modules.views.appMonitor.serviceDetail.s_244b8532') as string, labelKey: 'modules.views.appMonitor.serviceDetail.s_244b8532', value: 'tab-resource', match: ['web'] },
     { label: i18n.t('modules.views.appMonitor.serviceDetail.s_84d31a52') as string, labelKey: 'modules.views.appMonitor.serviceDetail.s_84d31a52', value: 'tab-jvm', match: ['web'] },

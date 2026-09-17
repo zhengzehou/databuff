@@ -108,6 +108,7 @@ import dayjs from 'dayjs';
 import { DbIconFilter } from '@/utils/filters/common';
 import { StringIsEmpty } from '@/utils/common';
 import { cloneDeep } from 'lodash';
+import { resolveInstanceIp } from '@/utils/instanceIp';
 
 const RequestTypeMapping: any = {
   'service.http': i18n.t('modules.views.appMonitor.resourceDetail.s_669262cd') as string,
@@ -519,16 +520,21 @@ export default class TabRelation extends Vue {
 
   // 跳转到服务实例详情
   private viewServiceInstanceHandle (row: any) {
+    const instanceIp = resolveInstanceIp(row);
+    const query: any = {
+      ...this.getRouteTimeOrRange,
+      sn: encodeURIComponent(this.current?.service || this.current?.serviceName || ''),
+      sid: encodeURIComponent(this.current?.serviceId || ''),
+      activeName: 'tab-cvm',
+      cvmIp: encodeURIComponent(instanceIp),
+      cvmSi: encodeURIComponent(row?.serviceInstance || ''),
+    };
     this.$router.push({
-      path: '/appMonitor/serviceInstance',
-      query: {
-        ...this.getRouteTimeOrRange,
-        sn: encodeURIComponent(this.current?.service || this.current?.serviceName),
-        sid: encodeURIComponent(this.current?.serviceId),
-        si: encodeURIComponent(row.serviceInstance),
-      }
+      path: '/appMonitor/serviceDetail',
+      query,
     });
   }
+
   // 跳转到主机详情
   private viewHostDetail (row: any) {
     this.$router.push({

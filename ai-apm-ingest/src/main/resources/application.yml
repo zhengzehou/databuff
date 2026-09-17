@@ -86,6 +86,7 @@ ingest:
     # 服务名由 appModule+appName 拼接（如 uletm + apm-service = uletm/apm-service）。
     # 注意：这里配置接口根地址，不要带 ?ip=（IpServiceResolver 会自动拼接）。留空则不解析，用 IP 兜底。
     ip-service-url: ${NGINX_KAFKA_IP_SERVICE_URL:https://opt.uletm.com/apm-statistics/api/search/app}
+    ip-service-max-concurrent-requests: ${NGINX_KAFKA_IP_SERVICE_MAX_CONCURRENT_REQUESTS:32}
     ip-service-name-field: ${NGINX_KAFKA_IP_SERVICE_NAME_FIELD:serviceName}
   doris:
     fe-host: ${DORIS_FE_HOST:172.25.200.167}

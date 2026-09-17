@@ -159,6 +159,7 @@ export default class BasicChart extends Vue {
   @Prop({ default: '' }) private title!: string | any;          // (选) 标题
   @Prop({ default: false }) private showLegend!: boolean; // (选) 是否显示legend
   @Prop({ default: null }) private minInterval!: number | null; // (选) y坐标轴最小间隔
+  @Prop({ default: null }) private yAxisInterval!: number | null; // optional fixed y-axis interval
   @Prop({ default: null }) private min!: number | null;   // (选) y坐标轴最小值
   @Prop({ default: null }) private max!: number | null;   // (选) y坐标轴最大值
   @Prop({ default: null }) private group!: string | null; // (选) 图表联动 group id
@@ -234,6 +235,7 @@ export default class BasicChart extends Vue {
       source: this.source,
       title: this.title,
       showLegend: this.showLegend,
+      yAxisInterval: this.yAxisInterval,
       minInterval: this.minInterval,
       min: this.min,
       max: this.max,
@@ -558,6 +560,7 @@ export default class BasicChart extends Vue {
       const unit = yAxisUnits[i] || '';
       return {
         type: 'value',
+        interval: this.yAxisInterval == null ? undefined : this.yAxisInterval,
         minInterval: this.yAxisMinInterval,
         min: this.min,
         max: this.max,
