@@ -83,6 +83,8 @@
             :showLegend="false"
             :compactGrid="true"
             :textSmallMode="true"
+            :min="panel.key === 'memoryUsage' || panel.key === 'filesystemUsage' ? percentAxisMin(panel) : null"
+            :max="panel.key === 'memoryUsage' || panel.key === 'filesystemUsage' ? percentAxisMax(panel) : null"
             :minInterval="panel.key === 'load' ? loadAxisInterval(panel) : panel.key === 'ioTime' ? 2.5 : 1"
             :yAxisInterval="panel.key === 'load' ? loadAxisInterval(panel) : panel.key === 'ioTime' ? 2.5 : null"
             :group="'cvm-' + panel.key"
@@ -354,6 +356,41 @@ export default class TabCvm extends Vue {
       return 0.5;
     }
     return 1;
+  }
+
+  private percentAxisBounds (panel: CvmPanel): { min: number; max: number } | null {
+    const values: number[] = [];
+    panel.source.forEach(series => {
+      series.data.forEach(point => {
+        const value = Number(point.value);
+        if (Number.isFinite(value)) {
+          values.push(value);
+        }
+      });
+    });
+    if (!values.length) {
+      return null;
+    }
+
+    const dataMin = Math.min(...values);
+    const dataMax = Math.max(...values);
+    const dataRange = dataMax - dataMin;
+    if (dataMin <= 5 || dataRange >= 20) {
+      return null;
+    }
+
+    const padding = Math.max(dataRange * 0.2, 0.5);
+    const min = Math.max(0, Math.floor((dataMin - padding) * 10) / 10);
+    const max = Math.min(100, Math.ceil((dataMax + padding) * 10) / 10);
+    return min < max && min > 0 ? { min, max } : null;
+  }
+
+  private percentAxisMin (panel: CvmPanel): number | null {
+    return this.percentAxisBounds(panel)?.min ?? null;
+  }
+
+  private percentAxisMax (panel: CvmPanel): number | null {
+    return this.percentAxisBounds(panel)?.max ?? null;
   }
 
   private toEpochMillis (value: any, fallback: number): number {
