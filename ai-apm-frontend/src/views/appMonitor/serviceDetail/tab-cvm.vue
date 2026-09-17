@@ -30,7 +30,8 @@
     <template v-else>
       <div v-if="warningMessage" class="cvm-warning">{{ warningMessage }}</div>
 
-      <div v-if="orderedStats.length" class="cvm-summary-grid">
+      <div :class="['cvm-overview', { 'has-filesystem': filesystems.length, 'has-stats': orderedStats.length }]">
+        <div v-if="orderedStats.length" class="cvm-summary-grid">
         <div
           v-for="stat in orderedStats"
           :key="stat.key"
@@ -41,12 +42,13 @@
       </div>
 
       <div v-if="filesystems.length" class="filesystem-card br-4">
-        <div class="section-title">{{ uiText.filesystem }}</div>
         <el-table
           :data="filesystems"
           size="small"
           stripe
-          class="filesystem-table">
+          class="filesystem-table"
+          max-height="220"
+          style="overflow:auto">
           <el-table-column prop="filesystem" :label="uiText.filesystemType" min-width="88" />
           <el-table-column prop="ip" :label="uiText.hostIp" min-width="140" />
           <el-table-column prop="mountpoint" :label="uiText.mountpoint" min-width="180" />
@@ -60,6 +62,7 @@
             <template slot-scope="scope">{{ formatPercent(scope.row.usedPercent) }}</template>
           </el-table-column>
         </el-table>
+      </div>
       </div>
 
       <div class="chart-group">
@@ -230,10 +233,9 @@ export default class TabCvm extends Vue {
   private readonly statOrder = [
     'uptime',
     'memoryTotal',
-    'cpuUsage',
-    'memoryUsage',
-    'swapUsage',
     'cpuCores',
+    'cpuUsage',
+    'swapUsage',
     'cpuIowait',
   ];
 
@@ -259,10 +261,12 @@ export default class TabCvm extends Vue {
 
   get orderedStats (): CvmStat[] {
     const order = new Map<string, number>(this.statOrder.map((key, index) => [key, index] as [string, number]));
-    return [...this.stats].sort((a, b) => (
-      (order.get(a.key) ?? this.statOrder.length)
-      - (order.get(b.key) ?? this.statOrder.length)
-    ));
+    return [...this.stats]
+      .filter(stat => stat.key !== 'memoryUsage')
+      .sort((a, b) => (
+        (order.get(a.key) ?? this.statOrder.length)
+        - (order.get(b.key) ?? this.statOrder.length)
+      ));
   }
 
   private statTitle (stat: CvmStat): string {
@@ -785,16 +789,36 @@ export default class TabCvm extends Vue {
   white-space: nowrap;
 }
 
-.cvm-summary-grid {
-  display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 8px;
+.cvm-overview {
   margin: 0 4px 8px;
 }
 
+.cvm-overview.has-filesystem.has-stats {
+  display: grid;
+  grid-template-columns: minmax(360px, 0.9fr) minmax(0, 1.6fr);
+  gap: 8px;
+  align-items: stretch;
+}
+
+.cvm-overview.has-filesystem.has-stats > .cvm-summary-grid {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.cvm-overview.has-filesystem.has-stats > .filesystem-card {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.cvm-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
 .summary-card {
-  min-height: 78px;
-  padding: 8px 10px;
+  min-height: 64px;
+  padding: 5px 6px;
   overflow: hidden;
   border: 1px solid var(--border-color-base);
   background: var(--bg-color);
@@ -805,8 +829,8 @@ export default class TabCvm extends Vue {
 .summary-title {
   overflow: hidden;
   color: var(--color-text-secondary);
-  font-size: 13px;
-  line-height: 20px;
+  font-size: 12px;
+  line-height: 18px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -814,9 +838,9 @@ export default class TabCvm extends Vue {
 .summary-value {
   overflow: hidden;
   color: #42b83f;
-  font-size: 25px;
+  font-size: 22px;
   font-weight: 500;
-  line-height: 34px;
+  line-height: 28px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -826,19 +850,12 @@ export default class TabCvm extends Vue {
 }
 
 .filesystem-card {
-  margin: 0 4px 8px;
+  margin: 0;
   padding: 0 8px 8px;
   overflow: hidden;
   border: 1px solid var(--border-color-base);
 }
 
-.section-title {
-  height: 28px;
-  color: var(--color-text-secondary);
-  font-size: 14px;
-  line-height: 28px;
-  text-align: center;
-}
 
 .filesystem-table {
   width: 100%;
@@ -997,9 +1014,13 @@ export default class TabCvm extends Vue {
 .chart-stat-list .chart-stat-row:nth-child(8n + 7) .chart-stat-marker { background: #fc8452; }
 .chart-stat-list .chart-stat-row:nth-child(8n) .chart-stat-marker { background: #9a60b4; }
 
-@media (max-width: 1500px) {
-  .cvm-summary-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+@media (max-width: 1300px) {
+  .cvm-overview.has-filesystem.has-stats {
+    display: block;
+  }
+
+  .filesystem-card {
+    margin-top: 8px;
   }
 }
 
