@@ -71,8 +71,8 @@ public class PrometheusClient {
         form.put("step", Long.toString(stepSeconds));
 
         String formBody = toFormBody(form);
-        String fullUrl = endpoint + (endpoint.getQuery() == null ? "?" : "&") + formBody;
-        log.info("Prometheus query_range URL: {}", fullUrl);
+//        String fullUrl = endpoint + (endpoint.getQuery() == null ? "?" : "&") + formBody;
+//        log.info("Prometheus query_range URL: {}", fullUrl);
         HttpRequest.Builder requestBuilder = HttpRequest.newBuilder(endpoint)
                 .timeout(Duration.ofMillis(properties.readTimeoutMs()))
                 .header("Accept", "application/json")

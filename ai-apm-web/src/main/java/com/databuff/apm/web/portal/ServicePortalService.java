@@ -26,21 +26,21 @@ import com.databuff.apm.common.storage.MetricIdentifierParser;
 import com.databuff.apm.common.storage.MetricQueryBuilder;
 import com.databuff.apm.web.config.ApmStorageProperties;
 import com.databuff.apm.web.config.common.CommonResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @Service
 public class ServicePortalService {
+    private static final Logger log = LoggerFactory.getLogger(ServicePortalService.class.getSimpleName());
 
     /** Portal 调用分析 RequestTypeMapping 可下钻的组件；不含 trace/flow/jvm 等。 */
     private static final List<String> SERVICE_COMPONENT_TYPES = List.of(
@@ -1519,8 +1519,20 @@ public class ServicePortalService {
         }
 
         peerDisplayNames.putIfAbsent(resolvedServiceId, serviceId);
+        // load service meta
+        List<MetaServicePoint> metaList = loadMetaServiceList(peerDisplayNames.keySet().stream().toList());
+        // metaList转为Map
+        Map<String, MetaServicePoint> metaMap = metaList.stream()
+                .filter(Objects::nonNull)
+                .filter(meta -> meta.serviceId() != null && !meta.serviceId().isBlank())
+                .collect(Collectors.toMap(
+                        MetaServicePoint::serviceId,
+                        Function.identity(),
+                        (oldValue, newValue) -> oldValue,
+                        LinkedHashMap::new));
+
         List<Map<String, Object>> serviceId2Name = peerDisplayNames.entrySet().stream()
-                .map(entry -> toPeerId2NameRow(entry.getKey(), entry.getValue()))
+                .map(entry -> toPeerId2NameRow(metaMap.get(entry.getKey()),entry.getKey(), entry.getValue()))
                 .toList();
         enrichPeerAlarmCounts(serviceId2Name, from, to);
 
@@ -2518,6 +2530,19 @@ public class ServicePortalService {
         }
     }
 
+    private List<MetaServicePoint> loadMetaServiceList(List<String> serviceIdList) {
+        try {
+            List<MetaServicePoint> rows = readRepository.queryMetaServices(
+                    MetricQueryBuilder.metaServiceByIdListSql(metricDatabase, serviceIdList));
+            if (rows.isEmpty()) {
+                return List.of();
+            }
+            return rows;
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
+
     private static String resolveServiceDisplayName(String serviceId, MetaServicePoint meta) {
         if (meta != null && meta.name() != null && !meta.name().isBlank()) {
             return meta.name();
@@ -2778,11 +2803,23 @@ public class ServicePortalService {
 
     private List<String> loadServiceComponentTypes(String serviceId, long from, long to) {
         List<String> componentTypes = new ArrayList<>();
-        for (String measurement : SERVICE_COMPONENT_TYPES) {
-            String table = componentTypeTable(measurement);
-            if (hasServiceMetricData(serviceId, table, from, to)) {
-                componentTypes.add(measurement);
+        List<Future<?>> futures = new ArrayList<>();
+        try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            for (String measurement : SERVICE_COMPONENT_TYPES) {
+                futures.add(executor.submit(() -> {
+                    String table = componentTypeTable(measurement);
+                    if (hasServiceMetricData(serviceId, table, from, to)) {
+                        componentTypes.add(measurement);
+                    }
+                }));
             }
+            for (Future<?> future : futures) {
+                future.get();
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (ExecutionException e) {
+            // Query failures are converted to empty results before they reach the future.
         }
         return componentTypes;
     }
@@ -4444,21 +4481,36 @@ public class ServicePortalService {
             List<Map<String, Object>> downflowServiceStats,
             Map<String, String> peerDisplayNames) {
         Set<String> serviceKeys = metricServiceIdKeys(serviceId);
-        for (ComponentPeerSpec spec : COMPONENT_PEER_SPECS) {
-            appendCombinedPeerStats(
-                    downflowServiceStats,
-                    peerDisplayNames,
-                    spec.componentType(),
-                    queryComponentPeers(spec, serviceKeys, serviceKeys, true, true, from, to, 200),
-                    queryComponentPeers(spec, serviceKeys, serviceKeys, true, false, from, to, 200),
-                    serviceKeys);
-            appendCombinedPeerStats(
-                    upflowServiceStats,
-                    peerDisplayNames,
-                    spec.componentType(),
-                    queryComponentPeers(spec, serviceKeys, serviceKeys, false, true, from, to, 200),
-                    queryComponentPeers(spec, serviceKeys, serviceKeys, false, false, from, to, 200),
-                    serviceKeys);
+        List<Future<?>> futures = new ArrayList<>();
+        try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            for (ComponentPeerSpec spec : COMPONENT_PEER_SPECS) {
+                if(spec.tableName.equals(DorisTableNames.METRIC_SERVICE_HTTP)){
+                    System.out.println();
+                }
+                futures.add(executor.submit(() ->
+                        appendCombinedPeerStats(
+                                downflowServiceStats,
+                                peerDisplayNames,
+                                spec.componentType(),
+                                queryComponentPeers(spec, serviceKeys, serviceKeys, true, true, from, to, 200),
+                                queryComponentPeers(spec, serviceKeys, serviceKeys, true, false, from, to, 200),
+                                serviceKeys)));
+                futures.add(executor.submit(() ->
+                    appendCombinedPeerStats(
+                            upflowServiceStats,
+                            peerDisplayNames,
+                            spec.componentType(),
+                            queryComponentPeers(spec, serviceKeys, serviceKeys, false, true, from, to, 200),
+                            queryComponentPeers(spec, serviceKeys, serviceKeys, false, false, from, to, 200),
+                            serviceKeys)));
+            }
+            for (Future<?> future : futures) {
+                future.get();
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (ExecutionException e) {
+            // Query failures are converted to empty results before they reach the future.
         }
     }
 
@@ -4703,12 +4755,9 @@ public class ServicePortalService {
         peerDisplayNames.putIfAbsent(resolvedId, firstNonBlank(serviceName, resolvedId));
     }
 
-    private Map<String, Object> toPeerId2NameRow(String resolvedServiceId, String metricServiceName) {
-        MetaServicePoint meta = loadMetaService(resolvedServiceId);
-        if (meta == null && !isBlank(metricServiceName)) {
-            meta = loadMetaService(metricServiceName);
-        }
-        String displayName = resolveServiceDisplayName(resolvedServiceId, meta);
+    private Map<String, Object> toPeerId2NameRow(MetaServicePoint meta, String serviceId, String metricServiceName) {
+
+        String displayName = meta == null ? null : meta.name();
         if (meta == null && !isBlank(metricServiceName)) {
             displayName = metricServiceName;
         }
@@ -4716,7 +4765,7 @@ public class ServicePortalService {
                 ? meta.serviceType()
                 : "web";
         Map<String, Object> row = new LinkedHashMap<>();
-        row.put("serviceId", resolvedServiceId);
+        row.put("serviceId", serviceId);
         row.put("serviceName", displayName);
         row.put("serviceType", serviceType);
         row.put("alarmCount", 0);

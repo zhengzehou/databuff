@@ -1705,6 +1705,15 @@ public final class MetricQueryBuilder {
                 """.formatted(META_SERVICE_COLUMNS, database, DorisTableNames.META_SERVICE, escapeLiteral(serviceId));
     }
 
+    public static String metaServiceByIdListSql(String database, List<String> serviceIdList) {
+        return """
+                SELECT %s
+                FROM %s.`%s`
+                WHERE `id` in( '%s')
+                LIMIT 1
+                """.formatted(META_SERVICE_COLUMNS, database, DorisTableNames.META_SERVICE, String.join("','",serviceIdList));
+    }
+
     /** Per-service rollup for portal {@code /service/serviceInfo}. */
     public static String serviceSummaryByServiceSql(
             String database, String service, long fromMillis, long toMillis) {
