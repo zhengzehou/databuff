@@ -27,6 +27,7 @@ import java.util.stream.Collectors;
 @Service
 public class PrometheusClient {
     private static final Logger log = LoggerFactory.getLogger(PrometheusClient.class);
+    private static final long HISTORICAL_LOOKBACK_SECONDS = 7L * 24L * 60L * 60L;
 
     private final ObjectMapper objectMapper;
     private final PrometheusProperties properties;
@@ -50,9 +51,10 @@ public class PrometheusClient {
             throw new PrometheusException(400, "Invalid Prometheus query parameters");
         }
 
+        boolean historicalSource = shouldUseHistoricalSource(startSec, endSec);
         URI endpoint;
         try {
-            endpoint = URI.create(properties.endpoint("query_range"));
+            endpoint = URI.create(endpoint("query_range", historicalSource));
         } catch (IllegalArgumentException e) {
             throw new PrometheusException(503, "Invalid Prometheus URL", e);
         }
@@ -133,9 +135,10 @@ public class PrometheusClient {
             throw new PrometheusException(400, "Invalid Prometheus query parameters");
         }
 
+        boolean historicalSource = shouldUseHistoricalSource(timeSec, timeSec);
         URI endpoint;
         try {
-            endpoint = URI.create(properties.endpoint("query"));
+            endpoint = URI.create(endpoint("query", historicalSource));
         } catch (IllegalArgumentException e) {
             throw new PrometheusException(503, "Invalid Prometheus URL", e);
         }
@@ -203,6 +206,20 @@ public class PrometheusClient {
                 parseInstantSeries(data.path("result")),
                 parseMessages(root, "warnings"),
                 parseMessages(root, "infos"));
+    }
+
+    private boolean shouldUseHistoricalSource(long startSec, long endSec) {
+        if (!properties.historicalConfigured() || startSec <= 0 || endSec <= 0) {
+            return false;
+        }
+        long cutoff = System.currentTimeMillis() / 1_000L - HISTORICAL_LOOKBACK_SECONDS;
+        return startSec <= cutoff;
+    }
+
+    private String endpoint(String operation, boolean historicalSource) {
+        return historicalSource
+                ? properties.historicalEndpoint(operation)
+                : properties.endpoint(operation);
     }
 
     private List<InstantSeries> parseInstantSeries(JsonNode result) {

@@ -71,6 +71,9 @@ apm:
     # Server-side Prometheus HTTP API used by the service-detail CVM tab.
     enabled: ${APM_PROMETHEUS_ENABLED:true}
     base-url: ${APM_PROMETHEUS_BASE_URL:https://opt.uletm.com/prometheus}
+    # Use the historical source when the requested time is at or before seven days ago.
+    historical-base-url: ${APM_PROMETHEUS_HISTORICAL_BASE_URL:http://opt3.beta.uletm.com/prometheus/206204}
+    historical-api-prefix: ${APM_PROMETHEUS_HISTORICAL_API_PREFIX:/api/v1}
     api-prefix: ${APM_PROMETHEUS_API_PREFIX:/api/v1}
     job: ${APM_PROMETHEUS_JOB:}
     bearer-token: ${APM_PROMETHEUS_BEARER_TOKEN:}

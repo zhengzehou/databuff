@@ -8,7 +8,9 @@ public class PrometheusProperties {
 
     private boolean enabled;
     private String baseUrl = "";
+    private String historicalBaseUrl = "";
     private String apiPrefix = "/api/v1";
+    private String historicalApiPrefix = "/api/v1";
     private String job = "";
     private String bearerToken = "";
     private String username = "";
@@ -27,8 +29,20 @@ public class PrometheusProperties {
         return trim(baseUrl);
     }
 
+    public String historicalBaseUrl() {
+        return trim(historicalBaseUrl);
+    }
+
     public String apiPrefix() {
-        String value = trim(apiPrefix);
+        return normalizeApiPrefix(apiPrefix);
+    }
+
+    public String historicalApiPrefix() {
+        return normalizeApiPrefix(historicalApiPrefix);
+    }
+
+    private static String normalizeApiPrefix(String value) {
+        value = trim(value);
         if (value.isEmpty()) {
             return "";
         }
@@ -73,8 +87,24 @@ public class PrometheusProperties {
 
     /** Builds an endpoint below the configured Prometheus base URL. */
     public String endpoint(String endpoint) {
-        String base = baseUrl().replaceAll("/+$", "");
-        String prefix = apiPrefix();
+        return endpoint(baseUrl(), apiPrefix(), endpoint);
+    }
+
+    /** Builds an endpoint below the historical Prometheus base URL. */
+    public String historicalEndpoint(String endpoint) {
+        String historicalBase = historicalBaseUrl();
+        if (historicalBase.isEmpty()) {
+            return endpoint(endpoint);
+        }
+        return endpoint(historicalBase, historicalApiPrefix(), endpoint);
+    }
+
+    public boolean historicalConfigured() {
+        return configured() && !historicalBaseUrl().isBlank();
+    }
+
+    private static String endpoint(String configuredBaseUrl, String prefix, String endpoint) {
+        String base = configuredBaseUrl.replaceAll("/+$", "");
         String normalizedEndpoint = endpoint == null ? "" : endpoint.replaceAll("^/+", "");
         if (!prefix.isEmpty() && base.endsWith(prefix)) {
             return base + "/" + normalizedEndpoint;
@@ -107,12 +137,28 @@ public class PrometheusProperties {
         this.baseUrl = baseUrl;
     }
 
+    public String getHistoricalBaseUrl() {
+        return historicalBaseUrl;
+    }
+
+    public void setHistoricalBaseUrl(String historicalBaseUrl) {
+        this.historicalBaseUrl = historicalBaseUrl;
+    }
+
     public String getApiPrefix() {
         return apiPrefix;
     }
 
     public void setApiPrefix(String apiPrefix) {
         this.apiPrefix = apiPrefix;
+    }
+
+    public String getHistoricalApiPrefix() {
+        return historicalApiPrefix;
+    }
+
+    public void setHistoricalApiPrefix(String historicalApiPrefix) {
+        this.historicalApiPrefix = historicalApiPrefix;
     }
 
     public String getJob() {
