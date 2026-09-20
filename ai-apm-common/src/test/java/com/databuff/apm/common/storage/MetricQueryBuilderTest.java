@@ -482,6 +482,20 @@ class MetricQueryBuilderTest {
                 List.of("demo-order"), null, null, 1000, 2000);
         assertThat(page).contains("ORDER BY bucket_epoch_sec ASC, `service` ASC");
         assertThat(page).contains("LIMIT 1000 OFFSET 2000");
+
+        String ranking = MetricQueryBuilder.serviceTrendRankingSql(
+                "databuff", 0L, 3_600_000L, 60, "errRate",
+                null, null, null, "desc", 20);
+        assertThat(ranking).contains("SUM(CASE WHEN request_cnt > 0");
+        assertThat(ranking).contains("AS metric_total");
+        assertThat(ranking).contains("ORDER BY metric_total DESC, `service` ASC");
+        assertThat(ranking).contains("LIMIT 20");
+        assertThat(ranking).contains("GROUP BY bucket_epoch_sec, `service`");
+
+        String topBuckets = MetricQueryBuilder.serviceTrendBucketsForServicesSql(
+                "databuff", 0L, 3_600_000L, 60, List.of("demo-order", "demo-pay"));
+        assertThat(topBuckets).contains("`service` IN ('demo-order', 'demo-pay')");
+        assertThat(topBuckets).doesNotContain(" LIMIT ");
     }
 
   @Test
@@ -803,6 +817,12 @@ class MetricQueryBuilderTest {
         String page = MetricQueryBuilder.metaServicesSql("databuff", null, 500, 1000);
         assertThat(page).contains("ORDER BY `name` ASC, `id` ASC");
         assertThat(page).contains("LIMIT 500 OFFSET 1000");
+
+        String active = MetricQueryBuilder.metaServicesByKeysSql(
+                "databuff", List.of("demo-order", "[mysql]demo"));
+        assertThat(active).contains("`id` IN (");
+        assertThat(active).contains("`name` IN ('demo-order', '[mysql]demo')");
+        assertThat(active).contains("`service` IN ('demo-order', '[mysql]demo')");
     }
 
     @Test

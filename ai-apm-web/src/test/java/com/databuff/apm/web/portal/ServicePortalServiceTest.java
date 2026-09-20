@@ -78,6 +78,9 @@ class ServicePortalServiceTest {
                 new ServiceTrendBucketPoint(1_780_545_360L, "demo-order", 100, 2, 1_250_000_000),
                 new ServiceTrendBucketPoint(1_780_545_420L, "demo-order", 80, 0, 900_000_000),
                 new ServiceTrendBucketPoint(1_780_545_360L, "demo-pay", 50, 1, 500_000_000)));
+        when(reader.queryTopGroupTotals(anyString())).thenReturn(List.of(
+                new ApmQueryModels.TopGroupTotal("demo-order", 180),
+                new ApmQueryModels.TopGroupTotal("demo-pay", 50)));
 
         ServicePortalService service = TestStorageSupport.servicePortalService(reader);
         List<Map<String, Object>> series = service.serviceListTrendChart(Map.of(
@@ -110,6 +113,9 @@ class ServicePortalServiceTest {
                 new ServiceTrendBucketPoint(1_780_545_360L, "demo-order", 100, 2, 1_250_000_000),
                 new ServiceTrendBucketPoint(1_780_545_360L, "[mysql]demo_apm", 50, 1, 500_000_000)));
         when(reader.queryMetaServices(anyString())).thenReturn(List.of());
+        when(reader.queryTopGroupTotals(anyString())).thenReturn(List.of(
+                new ApmQueryModels.TopGroupTotal("demo-order", 100),
+                new ApmQueryModels.TopGroupTotal("[mysql]demo_apm", 50)));
 
         ServicePortalService service = TestStorageSupport.servicePortalService(reader);
         List<Map<String, Object>> series = service.serviceListTrendChart(Map.of(

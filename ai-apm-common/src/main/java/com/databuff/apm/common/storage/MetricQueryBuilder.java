@@ -1075,6 +1075,88 @@ public final class MetricQueryBuilder {
                 + " OFFSET " + Math.max(0, offset == null ? 0 : offset);
     }
 
+    public static String serviceTrendRankingSql(
+            String database,
+            long fromMillis,
+            long toMillis,
+            int intervalSec,
+            String metric,
+            List<String> serviceIds,
+            List<String> serviceNames,
+            String serviceInstance,
+            String sortOrder,
+            Integer limit) {
+        int bucketSec = Math.max(60, intervalSec);
+        String serviceIdFilter = buildServiceKeyOrFilter(serviceIds);
+        String serviceNameFilter = buildServiceNameOrFilter(serviceNames);
+        String instanceFilter = buildServiceInstanceFilter(serviceInstance);
+        String bucketMetric = switch (metric) {
+            case "errRate" -> "CASE WHEN request_cnt > 0 THEN 100.0 * error_cnt / request_cnt ELSE 0 END";
+            case "avgTime", "p99Latencys", "p95Latencys", "p90Latencys" ->
+                    "CASE WHEN request_cnt > 0 THEN sum_duration_ns / request_cnt ELSE 0 END";
+            case "errReqCount", "typeErrCount" -> "error_cnt";
+            case "succReqCount" -> "request_cnt - error_cnt";
+            case "minuteReqCount" ->
+                    "request_cnt / " + Math.max(1.0, bucketSec / 60.0);
+            default -> "request_cnt";
+        };
+        String direction = "asc".equalsIgnoreCase(sortOrder) ? "ASC" : "DESC";
+        String limitClause = limit == null ? "" : " LIMIT " + Math.max(1, limit);
+        return """
+                SELECT `service` AS group_value,
+                       SUM(%s) AS metric_total
+                FROM (
+                    SELECT %s AS bucket_epoch_sec,
+                           `service`,
+                           SUM(`cnt`) AS request_cnt,
+                           SUM(`error`) AS error_cnt,
+                           SUM(`sumDuration`) AS sum_duration_ns
+                    FROM %s.`metric_service`
+                    WHERE %s
+                    %s
+                    %s
+                    %s
+                    GROUP BY bucket_epoch_sec, `service`
+                ) AS service_buckets
+                GROUP BY `service`
+                ORDER BY metric_total %s, `service` ASC
+                %s
+                """.formatted(
+                bucketMetric,
+                metricBucketEpochSecSelect(bucketSec),
+                database,
+                metricTsWhere(fromMillis, toMillis),
+                serviceIdFilter,
+                serviceNameFilter,
+                instanceFilter,
+                direction,
+                limitClause);
+    }
+
+    public static String serviceTrendBucketsForServicesSql(
+            String database,
+            long fromMillis,
+            long toMillis,
+            int intervalSec,
+            java.util.Collection<String> services) {
+        int bucketSec = Math.max(60, intervalSec);
+        return """
+                SELECT %s AS bucket_epoch_sec,
+                       `service`,
+                       SUM(`cnt`) AS request_cnt,
+                       SUM(`error`) AS error_cnt,
+                       SUM(`sumDuration`) AS sum_duration_ns
+                FROM %s.`metric_service`
+                WHERE %s
+                %s
+                GROUP BY bucket_epoch_sec, `service`
+                ORDER BY bucket_epoch_sec ASC, `service` ASC
+                """.formatted(
+                metricBucketEpochSecSelect(bucketSec),
+                database,
+                metricTsWhere(fromMillis, toMillis),
+                buildServiceNamesInFilter(services));
+    }
     public static String httpTrendBucketsSql(
             String database,
             long fromMillis,
@@ -2481,6 +2563,55 @@ public final class MetricQueryBuilder {
         return sql.toString();
     }
 
+    /** Metadata only for services active in the queried metric window. */
+    public static String metaServicesByKeysSql(
+            String database, java.util.Collection<String> serviceKeys) {
+        if (serviceKeys == null || serviceKeys.isEmpty()) {
+            return """
+                    SELECT %s
+                    FROM %s.`%s`
+                    WHERE 1 = 0
+                    """.formatted(META_SERVICE_COLUMNS, database, DorisTableNames.META_SERVICE);
+        }
+        java.util.LinkedHashSet<String> names = serviceKeys.stream()
+                .filter(key -> key != null && !key.isBlank())
+                .map(String::trim)
+                .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new));
+        if (names.isEmpty()) {
+            return """
+                    SELECT %s
+                    FROM %s.`%s`
+                    WHERE 1 = 0
+                    """.formatted(META_SERVICE_COLUMNS, database, DorisTableNames.META_SERVICE);
+        }
+        java.util.LinkedHashSet<String> ids = names.stream()
+                .map(PortalServiceIdResolver::normalize)
+                .filter(id -> id != null && !id.isBlank())
+                .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new));
+        String nameLiterals = names.stream()
+                .map(name -> "'" + escapeLiteral(name) + "'")
+                .collect(java.util.stream.Collectors.joining(", "));
+        String idLiterals = ids.stream()
+                .map(id -> "'" + escapeLiteral(id) + "'")
+                .collect(java.util.stream.Collectors.joining(", "));
+        return """
+                SELECT %s
+                FROM %s.`%s`
+                WHERE `id` IS NOT NULL AND `id` != ''
+                  AND (
+                        `id` IN (%s)
+                     OR `name` IN (%s)
+                     OR `service` IN (%s)
+                  )
+                ORDER BY `name` ASC, `id` ASC
+                """.formatted(
+                META_SERVICE_COLUMNS,
+                database,
+                DorisTableNames.META_SERVICE,
+                idLiterals,
+                nameLiterals,
+                nameLiterals);
+    }
     private static String buildServiceInstanceFilter(String serviceInstance) {
         if (serviceInstance == null || serviceInstance.isBlank()) {
             return "";
@@ -3058,6 +3189,21 @@ public final class MetricQueryBuilder {
         return " AND `service` = '" + escapeLiteral(serviceNames) + "' ";
     }
 
+    private static String buildServiceNamesInFilter(java.util.Collection<String> serviceNames) {
+        if (serviceNames == null || serviceNames.isEmpty()) {
+            return " AND 1 = 0 ";
+        }
+        String joined = serviceNames.stream()
+                .filter(name -> name != null && !name.isBlank())
+                .map(String::trim)
+                .distinct()
+                .map(name -> "'" + escapeLiteral(name) + "'")
+                .collect(java.util.stream.Collectors.joining(", "));
+        if (joined.isBlank()) {
+            return " AND 1 = 0 ";
+        }
+        return " AND `service` IN (" + joined + ") ";
+    }
     private static String buildServiceIdsInFilter(java.util.Collection<String> serviceIds) {
         if (serviceIds == null || serviceIds.isEmpty()) {
             return "";
