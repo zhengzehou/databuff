@@ -150,7 +150,6 @@ public class MetricQueryService {
 
     @SuppressWarnings("unchecked")
     public List<Map<String, Object>> metricChart(Map<String, Object> body) {
-        long startedNanos = System.nanoTime();
         try {
             Map<String, Object> queryRoot = body.get("query") instanceof Map<?, ?> queryMap
                     ? (Map<String, Object>) queryMap
@@ -175,16 +174,13 @@ public class MetricQueryService {
 
             MetricIdentifierParser.ParsedMetric parsed = MetricIdentifierParser.parse(metric);
             if ("service.exception".equals(parsed.measurement())) {
-                List<Map<String, Object>> result = List.of(buildChartSeries(
+                return List.of(buildChartSeries(
                         serviceErrorSeries(new MetricSeriesRequest(metric, start, end, filters)),
                         Map.of(),
                         metric,
                         start,
                         end,
                         interval));
-                log.info("metricChart metric={} exceptionSeries rows={} elapsedMs={}",
-                        metric, result.size(), (System.nanoTime() - startedNanos) / 1_000_000D);
-                return result;
             }
             String table = MetricIdentifierParser.dorisTableName(parsed.measurement());
             String filterClause = buildFilterClause(filters);
@@ -210,20 +206,14 @@ public class MetricQueryService {
                             end,
                             interval));
                 }
-                log.info("metricChart metric={} by={} groups={} rows={} elapsedMs={}",
-                        metric, groupBy, groups.size(), series.size(), (System.nanoTime() - startedNanos) / 1_000_000D);
                 return series;
             }
 
             String sql = MetricQueryBuilder.metricFieldSeriesSql(
                     metricDatabase, table, fieldColumn, toMillis(start), toMillis(end), filterClause, interval, aggs);
-            List<MetricSeriesPoint> raw = readRepository.queryMetricSeries(sql);
-            log.info("metricChart metric={} by=none rows={} elapsedMs={} sql={}",
-                    metric, raw.size(), (System.nanoTime() - startedNanos) / 1_000_000D, sql);
-            return List.of(buildChartSeries(raw, Map.of(), metric, start, end, interval));
+            return List.of(buildChartSeries(
+                    readRepository.queryMetricSeries(sql), Map.of(), metric, start, end, interval));
         } catch (Exception e) {
-            log.error("metricChart error metric={} elapsedMs={}",
-                    body.get("query"), (System.nanoTime() - startedNanos) / 1_000_000D, e);
             return List.of();
         }
     }
@@ -679,7 +669,7 @@ public class MetricQueryService {
                 continue;
             }
             clause.append(MetricQueryBuilder.metricFilterClause(
-                    normalizeFilterColumn(filter.left()), filter.operator(), filter.right()));
+                    normalizeFilterColumn(filter.left()), filter.operator(), String.valueOf(filter.right())));
         }
         return clause.toString();
     }
