@@ -41,6 +41,10 @@ import java.util.stream.Collectors;
 @Service
 public class ServicePortalService {
     private static final Logger log = LoggerFactory.getLogger(ServicePortalService.class.getSimpleName());
+    private static final int META_SERVICE_PAGE_SIZE = 1000;
+    private static final int META_SERVICE_PAGE_CONCURRENCY = 10;
+    private static final int SERVICE_TREND_PAGE_SIZE = 1000;
+    private static final int SERVICE_TREND_PAGE_CONCURRENCY = 10;
 
     /** Portal 调用分析 RequestTypeMapping 可下钻的组件；不含 trace/flow/jvm 等。 */
     private static final List<String> SERVICE_COMPONENT_TYPES = List.of(
@@ -918,7 +922,7 @@ public class ServicePortalService {
         List<ExceptionDistPoint> points = loadExceptionDistPoints(
                 groupBy, from, to, serviceId, serviceInstance, resourceQuery, exception, rootResourceQuery);
 
-        Map<String, MetaServicePoint> metaById = "serviceId".equals(groupBy) ? loadMetaServiceIndex() : Map.of();
+        Map<String, MetaServicePoint> metaById = "serviceId".equals(groupBy) ? loadMetaServiceIndex(null) : Map.of();
         List<Map<String, Object>> rows = new ArrayList<>();
         for (ExceptionDistPoint point : points) {
             Map<String, Object> row = new LinkedHashMap<>();
@@ -1121,7 +1125,7 @@ public class ServicePortalService {
 
     private List<Map<String, Object>> loadBasicServicesFromMetrics(
             Map<String, Object> body, long from, long to) {
-        Map<String, MetaServicePoint> metaById = loadMetaServiceIndex();
+        Map<String, MetaServicePoint> metaById = loadMetaServiceIndex(null);
         return listDistinctServices(from, to).stream()
                 .map(serviceKey -> {
                     MetaServicePoint meta = resolveMetaPoint(serviceKey, metaById);
@@ -1144,18 +1148,52 @@ public class ServicePortalService {
         }
     }
 
-    private Map<String, MetaServicePoint> loadMetaServiceIndex() {
+    private Map<String, MetaServicePoint> loadMetaServiceIndex(String serviceName) {
         try {
-            String sql = MetricQueryBuilder.metaServicesSql(metricDatabase, null);
             Map<String, MetaServicePoint> index = new LinkedHashMap<>();
-            for (MetaServicePoint point : readRepository.queryMetaServices(sql)) {
-                if (point.id() != null && !point.id().isBlank()) {
-                    index.putIfAbsent(point.id(), point);
+            if (serviceName != null && !serviceName.isBlank()) {
+                addMetaServicePoints(index, readRepository.queryMetaServices(
+                        MetricQueryBuilder.metaServicesSql(metricDatabase, serviceName)));
+                return index;
+            }
+
+            try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+                int offset = 0;
+                boolean hasMore = true;
+                while (hasMore) {
+                    List<Future<List<MetaServicePoint>>> futures = new ArrayList<>(META_SERVICE_PAGE_CONCURRENCY);
+                    for (int page = 0; page < META_SERVICE_PAGE_CONCURRENCY; page++) {
+                        int pageOffset = offset + page * META_SERVICE_PAGE_SIZE;
+                        futures.add(executor.submit(() -> readRepository.queryMetaServices(
+                                MetricQueryBuilder.metaServicesSql(
+                                        metricDatabase, null, META_SERVICE_PAGE_SIZE, pageOffset))));
+                    }
+                    for (Future<List<MetaServicePoint>> future : futures) {
+                        List<MetaServicePoint> points = future.get();
+                        addMetaServicePoints(index, points);
+                        if (points.size() < META_SERVICE_PAGE_SIZE) {
+                            hasMore = false;
+                            break;
+                        }
+                    }
+                    offset += META_SERVICE_PAGE_SIZE * META_SERVICE_PAGE_CONCURRENCY;
                 }
             }
             return index;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return Map.of();
         } catch (Exception e) {
             return Map.of();
+        }
+    }
+
+    private static void addMetaServicePoints(
+            Map<String, MetaServicePoint> index, List<MetaServicePoint> points) {
+        for (MetaServicePoint point : points) {
+            if (point.id() != null && !point.id().isBlank()) {
+                index.putIfAbsent(point.id(), point);
+            }
         }
     }
 
@@ -2191,7 +2229,7 @@ public class ServicePortalService {
 
         long durationMs = Math.max(1L, to - from);
         double durationSec = durationMs / 1000.0;
-        Map<String, MetaServicePoint> metaById = loadMetaServiceIndex();
+        Map<String, MetaServicePoint> metaById = loadMetaServiceIndex(serviceName);
         List<Map<String, Object>> rows = new ArrayList<>(summaries.size());
         for (ServiceSummaryPoint summary : summaries) {
             long callCnt = summary.requestCount();
@@ -2326,10 +2364,14 @@ public class ServicePortalService {
         int interval = intValue(body.get("interval"), 60);
         String metric = stringValue(body.get("metric"), "reqCount");
         boolean asc = "asc".equalsIgnoreCase(stringValue(body.get("sortOrder"), "desc"));
+        String serviceName = stringValue(body.get("serviceName"),null);
         List<String> serviceTypes = parseStringList(body.get("serviceTypes"));
-        Map<String, MetaServicePoint> metaById = serviceTypes.isEmpty() ? Map.of() : loadMetaServiceIndex();
-
-        List<ServiceTrendBucketPoint> buckets = loadServiceBuckets(from, to, interval, serviceId, serviceInstance);
+        Map<String, MetaServicePoint> metaById = serviceTypes.isEmpty() ? Map.of() : loadMetaServiceIndex(serviceName);
+        log.info("Building service series for {} 1st use time {}", serviceId,System.currentTimeMillis()-now);
+        now = System.currentTimeMillis();
+        List<ServiceTrendBucketPoint> buckets = loadServiceBuckets(from, to, interval, serviceId,serviceName, serviceInstance);
+        log.info("Building service series for {} 2st use time {}", serviceId,System.currentTimeMillis()-now);
+        now = System.currentTimeMillis();
         if (!serviceTypes.isEmpty()) {
             buckets = buckets.stream()
                     .filter(bucket -> matchesListServiceTypes(bucket.service(), serviceTypes, metaById))
@@ -2357,7 +2399,8 @@ public class ServicePortalService {
         } else {
             targetServices = buckets.stream().map(ServiceTrendBucketPoint::service).distinct().toList();
         }
-
+        log.info("Building service series for {} 3st use time {}", serviceId,System.currentTimeMillis()-now);
+        now = System.currentTimeMillis();
         Set<String> topSet = new LinkedHashSet<>(targetServices);
         Map<String, List<ServiceTrendBucketPoint>> byService;
         if (serviceId != null) {
@@ -2371,7 +2414,8 @@ public class ServicePortalService {
                     .filter(row -> topSet.contains(row.service()))
                     .collect(Collectors.groupingBy(ServiceTrendBucketPoint::service));
         }
-
+        log.info("Building service series for {} 4st use time {}", serviceId,System.currentTimeMillis()-now);
+        now = System.currentTimeMillis();
         List<Map<String, Object>> series = new ArrayList<>();
         for (String service : targetServices) {
             Map<Long, ServiceTrendBucketPoint> rowByBucket = byService.getOrDefault(service, List.of()).stream()
@@ -2395,6 +2439,8 @@ public class ServicePortalService {
             item.put("values", values);
             series.add(item);
         }
+        log.info("Building service series for {} 5st use time {}", serviceId,System.currentTimeMillis()-now);
+        now = System.currentTimeMillis();
         return series;
     }
 
@@ -2415,7 +2461,7 @@ public class ServicePortalService {
             if (instance == null || instance.isBlank()) {
                 continue;
             }
-            List<ServiceTrendBucketPoint> buckets = loadServiceBuckets(from, to, interval, serviceId, instance);
+            List<ServiceTrendBucketPoint> buckets = loadServiceBuckets(from, to, interval, serviceId, null, instance);
             long requests = 0L;
             double total = 0.0;
             for (ServiceTrendBucketPoint bucket : buckets) {
@@ -2473,15 +2519,44 @@ public class ServicePortalService {
             long to,
             int interval,
             String serviceId,
+            String serviceName,
             String serviceInstance) {
         try {
-            List<String> services = null;
-            if (serviceId != null && !serviceId.isBlank()) {
-                services = new ArrayList<>(metricServiceIdKeys(serviceId));
+            List<String> serviceIds = serviceId != null && !serviceId.isBlank()
+                    ? new ArrayList<>(metricServiceIdKeys(serviceId))
+                    : null;
+            List<String> serviceNames = serviceName != null && !serviceName.isBlank()
+                    ? new ArrayList<>(metricServiceIdKeys(serviceName))
+                    : null;
+            List<ServiceTrendBucketPoint> buckets = new ArrayList<>();
+            try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+                int offset = 0;
+                boolean hasMore = true;
+                while (hasMore) {
+                    List<Future<List<ServiceTrendBucketPoint>>> futures = new ArrayList<>(SERVICE_TREND_PAGE_CONCURRENCY);
+                    for (int page = 0; page < SERVICE_TREND_PAGE_CONCURRENCY; page++) {
+                        int pageOffset = offset + page * SERVICE_TREND_PAGE_SIZE;
+                        futures.add(executor.submit(() -> readRepository.queryServiceTrendBuckets(
+                                MetricQueryBuilder.serviceTrendBucketsSql(
+                                        metricDatabase, from, to, interval,
+                                        serviceIds, serviceNames, serviceInstance,
+                                        SERVICE_TREND_PAGE_SIZE, pageOffset))));
+                    }
+                    for (Future<List<ServiceTrendBucketPoint>> future : futures) {
+                        List<ServiceTrendBucketPoint> page = future.get();
+                        buckets.addAll(page);
+                        if (page.size() < SERVICE_TREND_PAGE_SIZE) {
+                            hasMore = false;
+                            break;
+                        }
+                    }
+                    offset += SERVICE_TREND_PAGE_SIZE * SERVICE_TREND_PAGE_CONCURRENCY;
+                }
             }
-            String sql = MetricQueryBuilder.serviceTrendBucketsSql(
-                    metricDatabase, from, to, interval, services, serviceInstance);
-            return readRepository.queryServiceTrendBuckets(sql);
+            return buckets;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return List.of();
         } catch (Exception e) {
             return List.of();
         }

@@ -1017,8 +1017,8 @@ public final class MetricQueryBuilder {
             long fromMillis,
             long toMillis,
             int intervalSec,
-            List<String> services) {
-        return serviceTrendBucketsSql(database, fromMillis, toMillis, intervalSec, services, null);
+            List<String> serviceIds) {
+        return serviceTrendBucketsSql(database, fromMillis, toMillis, intervalSec, serviceIds, null, null);
     }
 
     public static String serviceTrendBucketsSql(
@@ -1026,12 +1026,29 @@ public final class MetricQueryBuilder {
             long fromMillis,
             long toMillis,
             int intervalSec,
-            List<String> services,
+            List<String> serviceIds,
+            List<String> serviceNames,
             String serviceInstance) {
+        return serviceTrendBucketsSql(
+                database, fromMillis, toMillis, intervalSec,
+                serviceIds, serviceNames, serviceInstance, null, null);
+    }
+
+    public static String serviceTrendBucketsSql(
+            String database,
+            long fromMillis,
+            long toMillis,
+            int intervalSec,
+            List<String> serviceIds,
+            List<String> serviceNames,
+            String serviceInstance,
+            Integer limit,
+            Integer offset) {
         int bucketSec = Math.max(60, intervalSec);
-        String serviceFilter = buildServiceKeyOrFilter(services);
+        String serviceIdFilter = buildServiceKeyOrFilter(serviceIds);
+        String serviceNameFilter = buildServiceNameOrFilter(serviceNames);
         String instanceFilter = buildServiceInstanceFilter(serviceInstance);
-        return """
+        String sql = """
                 SELECT %s AS bucket_epoch_sec,
                        `service`,
                        SUM(`cnt`) AS request_cnt,
@@ -1041,14 +1058,21 @@ public final class MetricQueryBuilder {
                 WHERE %s
                 %s
                 %s
+                %s
                 GROUP BY bucket_epoch_sec, `service`
                 ORDER BY bucket_epoch_sec ASC, `service` ASC
                 """.formatted(
                 metricBucketEpochSecSelect(bucketSec),
                 database,
                 metricTsWhere(fromMillis, toMillis),
-                serviceFilter,
+                serviceIdFilter,
+                serviceNameFilter,
                 instanceFilter);
+        if (limit == null) {
+            return sql;
+        }
+        return sql + " LIMIT " + Math.max(1, limit)
+                + " OFFSET " + Math.max(0, offset == null ? 0 : offset);
     }
 
     public static String httpTrendBucketsSql(
@@ -2432,6 +2456,12 @@ public final class MetricQueryBuilder {
 
     /** All registered services from {@code meta_service} (portal {@code /service/basicAllServices}). */
     public static String metaServicesSql(String database, String serviceNameContains) {
+        return metaServicesSql(database, serviceNameContains, null, null);
+    }
+
+    /** A stable page of registered services from {@code meta_service}. */
+    public static String metaServicesSql(
+            String database, String serviceNameContains, Integer limit, Integer offset) {
         StringBuilder sql = new StringBuilder("""
                 SELECT %s
                 FROM %s.`%s`
@@ -2444,6 +2474,10 @@ public final class MetricQueryBuilder {
                     .append("%' OR `id` LIKE '%").append(pattern).append("%') ");
         }
         sql.append(" ORDER BY `name` ASC, `id` ASC ");
+        if (limit != null) {
+            sql.append(" LIMIT ").append(Math.max(1, limit));
+            sql.append(" OFFSET ").append(Math.max(0, offset == null ? 0 : offset));
+        }
         return sql.toString();
     }
 
@@ -3014,6 +3048,14 @@ public final class MetricQueryBuilder {
             return "";
         }
         return " AND `service_id` = '" + escapeLiteral(serviceId) + "' ";
+    }
+
+    static String buildServiceNameOrFilter(java.util.Collection<String> names) {
+        String serviceNames = firstNormalizedServiceId(names);
+        if (serviceNames == null) {
+            return "";
+        }
+        return " AND `service` = '" + escapeLiteral(serviceNames) + "' ";
     }
 
     private static String buildServiceIdsInFilter(java.util.Collection<String> serviceIds) {

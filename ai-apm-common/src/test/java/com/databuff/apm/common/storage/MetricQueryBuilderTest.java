@@ -476,6 +476,12 @@ class MetricQueryBuilderTest {
         assertThat(sql).contains("`service_id` = '" + PortalServiceIdResolver.normalize("demo-order") + "'");
         assertThat(sql).doesNotContain(" AND `service` IN ");
         assertThat(sql).contains("sum_duration_ns");
+
+        String page = MetricQueryBuilder.serviceTrendBucketsSql(
+                "databuff", 0L, 3_600_000L, 60,
+                List.of("demo-order"), null, null, 1000, 2000);
+        assertThat(page).contains("ORDER BY bucket_epoch_sec ASC, `service` ASC");
+        assertThat(page).contains("LIMIT 1000 OFFSET 2000");
     }
 
   @Test
@@ -793,6 +799,10 @@ class MetricQueryBuilderTest {
 
         String filtered = MetricQueryBuilder.metaServicesSql("databuff", "order");
         assertThat(filtered).contains("`name` LIKE '%order%'");
+
+        String page = MetricQueryBuilder.metaServicesSql("databuff", null, 500, 1000);
+        assertThat(page).contains("ORDER BY `name` ASC, `id` ASC");
+        assertThat(page).contains("LIMIT 500 OFFSET 1000");
     }
 
     @Test
