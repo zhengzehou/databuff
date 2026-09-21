@@ -8,10 +8,24 @@ export interface CvmMetricQueryParams {
   interval: number
 }
 
+export interface ServiceHostMetricQueryParams {
+  serviceName: string
+  start: number
+  end: number
+  interval: number
+}
+
 export default {
   queryCvmMetrics (data: CvmMetricQueryParams) {
     return http.request({
       url: '/prometheus/cvm/metrics',
+      method: 'post',
+      data,
+    })
+  },
+  queryServiceHostMetrics (data: ServiceHostMetricQueryParams) {
+    return http.request({
+      url: '/prometheus/service-host/metrics',
       method: 'post',
       data,
     })

@@ -669,7 +669,7 @@ public class MetricQueryService {
                 continue;
             }
             clause.append(MetricQueryBuilder.metricFilterClause(
-                    normalizeFilterColumn(filter.left()), filter.operator(), String.valueOf(filter.right())));
+                    normalizeFilterColumn(filter.left()), filter.operator(), filter.right()));
         }
         return clause.toString();
     }

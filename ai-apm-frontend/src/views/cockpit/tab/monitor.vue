@@ -209,6 +209,15 @@
         </div>
       </div>
     </template>
+    <!-- 单服务时展示 Prometheus 服务器资源指标 -->
+    <div v-if="isSingleService" class="section bg-color br-4 p-16 mb-16">
+      <div class="section-title">服务器资源</div>
+      <service-host-metrics
+        ref="serviceHostMetrics"
+        :serviceName="selectedService"
+        :key="'host-' + selectedService" />
+    </div>
+
     <!-- 单服务时 JVM 数据移至最底部嵌入 -->
     <div v-if="isSingleService" class="section bg-color br-4 p-16 mb-16">
       <div class="section-title">资源 / JVM</div>
@@ -296,6 +305,7 @@ import dayjs from 'dayjs';
 import { toAsyncWait } from '@/utils/common';
 import { fetchKpiSummary, fetchMetricTrends, fetchServiceRanking, fetchServiceEndpoints, toSeriesPoints, Series, MetricFilter } from '@/utils/metricQuery';
 import ServiceJvmTab from '@/views/appMonitor/serviceDetail/tab-jvm.vue';
+import ServiceHostMetrics from '../component/service-host-metrics.vue';
 
 // 慢调用口径：HTTP 入口请求（isIn=1）且 durationRange = '3000ms+'（单次请求耗时 >3s，DurationRangeUtil 分桶），
 // 统计值为该桶 cnt 求和，即真实的 >3s 慢请求总数。
@@ -312,7 +322,7 @@ const withInboundFilters = (metric: string, filters: MetricFilter[] = []) => {
   return filters.some((filter) => filter.left === 'isIn') ? filters : [...INBOUND_FILTERS, ...filters];
 };
 
-@Component({ components: { MetricKpiCard, MetricTrendCard, CardTrend, BasicChart, ServiceJvmTab } })
+@Component({ components: { MetricKpiCard, MetricTrendCard, CardTrend, BasicChart, ServiceJvmTab, ServiceHostMetrics } })
 export default class MonitorTab extends Vue {
   private selectedService: string = '';
   private serviceOptions: Array<{ label: string; value: string }> = [];
@@ -612,6 +622,8 @@ export default class MonitorTab extends Vue {
         const ref: any = (this as any).$refs.embeddedJvm;
         if (ref && ref.refresh) ref.refresh();
         else if (ref && ref.fetchAllData) ref.fetchAllData();
+        const hostRef: any = (this as any).$refs.serviceHostMetrics;
+        if (hostRef && hostRef.refresh) hostRef.refresh();
       });
     }
   }
