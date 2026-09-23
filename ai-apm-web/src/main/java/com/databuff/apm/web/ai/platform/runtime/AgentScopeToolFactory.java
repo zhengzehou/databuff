@@ -46,6 +46,8 @@ public class AgentScopeToolFactory {
     private PlatformTools platformTools;
     @Autowired
     private RemoteMcpToolRegistrar remoteMcpToolRegistrar;
+    @Autowired
+    private PrometheusToolProvider prometheusToolProvider;
 
     public List<McpClientWrapper> registerTools(Toolkit toolkit, List<AiToolDefinition> tools) {
         List<McpClientWrapper> mcpClients = new ArrayList<>();
@@ -63,6 +65,19 @@ public class AgentScopeToolFactory {
                 McpClientWrapper client = remoteMcpToolRegistrar.register(toolkit, tool);
                 if (client != null) {
                     mcpClients.add(client);
+                }
+            } else if (tool.type() == ToolType.PROMETHEUS) {
+                if (!prometheusToolProvider.isConfigured(tool)) {
+                    log.warn("Prometheus tool {} has no endpoint; skipping registration", tool.toolId());
+                } else if (registered.add("prometheus")) {
+                    try {
+                        toolkit.registerTool(prometheusToolProvider.create(tool));
+                    } catch (IllegalArgumentException ex) {
+                        log.warn("Prometheus tool {} has invalid configuration; skipping registration: {}",
+                                tool.toolId(), ex.getMessage());
+                    }
+                } else {
+                    log.warn("Only one Prometheus service can be registered for an expert; skipping {}", tool.toolId());
                 }
             } else {
                 log.warn("Unsupported tool type {} for tool {}", tool.type(), tool.toolId());

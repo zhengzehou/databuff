@@ -3,6 +3,7 @@ package com.databuff.apm.web.ai.mcp.standard;
 import com.databuff.apm.web.ai.platform.AiPlatformApiException;
 import com.databuff.apm.web.tools.local.CommonTools;
 import com.databuff.apm.web.tools.local.DataTools;
+import com.databuff.apm.web.tools.local.DataCatalogTools;
 import com.databuff.apm.web.tools.local.InspectTools;
 import com.databuff.apm.web.tools.local.LogTools;
 import com.databuff.apm.web.tools.local.MetricQueryRequest;
@@ -25,6 +26,8 @@ public class JavaBeanToolExecutor {
     private final LogTools logTools;
     private final TimeTool timeTool;
     private final PlatformTools platformTools;
+    private final DataCatalogTools dataCatalogTools;
+    private final PrometheusMcpFacade prometheusMcpFacade;
     private final ObjectMapper objectMapper;
 
     public JavaBeanToolExecutor(
@@ -34,6 +37,8 @@ public class JavaBeanToolExecutor {
             LogTools logTools,
             TimeTool timeTool,
             PlatformTools platformTools,
+            DataCatalogTools dataCatalogTools,
+            PrometheusMcpFacade prometheusMcpFacade,
             ObjectMapper objectMapper) {
         this.commonTools = commonTools;
         this.dataTools = dataTools;
@@ -41,6 +46,8 @@ public class JavaBeanToolExecutor {
         this.logTools = logTools;
         this.timeTool = timeTool;
         this.platformTools = platformTools;
+        this.dataCatalogTools = dataCatalogTools;
+        this.prometheusMcpFacade = prometheusMcpFacade;
         this.objectMapper = objectMapper;
     }
 
@@ -139,6 +146,20 @@ public class JavaBeanToolExecutor {
                     safeRequest.stepSeconds(),
                     safeRequest.tag(),
                     firstNonNull(safeRequest.limit(), safeRequest.size()));
+            case "dataCatalogTools.listDataTables" -> dataCatalogTools.listDataTables(safeRequest.keyword());
+            case "dataCatalogTools.getTableSchema" -> dataCatalogTools.getTableSchema(safeRequest.table());
+            case "dataCatalogTools.searchDataFields" ->
+                    dataCatalogTools.searchDataFields(safeRequest.keyword(), safeRequest.limit());
+            case "dataCatalogTools.getMetricCatalog" ->
+                    dataCatalogTools.getMetricCatalog(safeRequest.measurement());
+            case "prometheusMcp.query" ->
+                    prometheusMcpFacade.query(safeRequest.query(), safeRequest.time());
+            case "prometheusMcp.queryRange" -> prometheusMcpFacade.queryRange(
+                    safeRequest.query(), safeRequest.start(), safeRequest.end(), safeRequest.step());
+            case "prometheusMcp.series" -> prometheusMcpFacade.series(
+                    safeRequest.match(), safeRequest.start(), safeRequest.end());
+            case "prometheusMcp.metadata" ->
+                    prometheusMcpFacade.metadata(safeRequest.metric(), safeRequest.limit());
             default -> throw AiPlatformApiException.badRequest("unsupported implementation: " + implementation);
         };
     }
@@ -230,7 +251,13 @@ public class JavaBeanToolExecutor {
             String valueMode,
             Integer stepSeconds,
             String tag,
-            Integer limit) {
+            Integer limit,
+            String table,
+            String time,
+            String start,
+            String end,
+            String step,
+            List<String> match) {
 
         public static TestToolRequest empty() {
             return new TestToolRequest(
@@ -239,7 +266,8 @@ public class JavaBeanToolExecutor {
                     null, null, null, null,
                     null, null, null, null, null, null, null, null, null, null, null,
                     null, null,
-                    null, null, null, null, null, null, null, null, null, null, null, null);
+                    null, null, null, null, null, null, null, null, null, null, null, null,
+                    null, null, null, null, null, null);
         }
     }
 }

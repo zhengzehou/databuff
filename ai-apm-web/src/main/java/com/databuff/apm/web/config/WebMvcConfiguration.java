@@ -1,6 +1,7 @@
 package com.databuff.apm.web.config;
 
 import com.databuff.apm.web.auth.AuthInterceptor;
+import com.databuff.apm.web.auth.McpAuthInterceptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.CacheControl;
@@ -18,6 +19,9 @@ public class WebMvcConfiguration implements WebMvcConfigurer {
 
     @Autowired
     private AuthInterceptor authInterceptor;
+
+    @Autowired
+    private McpAuthInterceptor mcpAuthInterceptor;
 
     @Override
     public void configurePathMatch(PathMatchConfigurer configurer) {
@@ -46,7 +50,13 @@ public class WebMvcConfiguration implements WebMvcConfigurer {
                         "/webapi/respPolicy/**",
                         "/webapi/meta/**")
                 .excludePathPatterns(
-                        "/webapi/api/v1/auth/login");
+                        "/webapi/api/v1/auth/login",
+                        "/webapi/api/v1/dsh/auth/status");
+
+        registry.addInterceptor(mcpAuthInterceptor)
+                .addPathPatterns(
+                        "/mcp",
+                        "/webapi/api/v1/dsh/auth/status");
     }
 
     @Override

@@ -104,7 +104,58 @@ public class McpToolCatalog {
                 tool("inspectService",
                         "Inspect one service: entry metrics, ERROR/WARN/keyword logs, alarms, dependencies, error traces, instances; web also checks exception/JVM/CPU/memory",
                         schema(Map.of("serviceName", stringProp("Service name to inspect")),
-                        List.of("serviceName"))));
+                        List.of("serviceName"))),
+                tool("listDataTables",
+                        "List the curated read-only DataBuff tables exposed to ChatBI",
+                        schema(Map.of("keyword", stringProp("Optional table-name filter")))),
+                tool("getTableSchema",
+                        "Describe one curated DataBuff table; sensitive configuration tables are not exposed",
+                        schema(Map.of("table", stringProp("Exact table name returned by listDataTables")),
+                                List.of("table"))),
+                tool("searchDataFields",
+                        "Search metric measurements, tags, and fields in the DataBuff metric catalog",
+                        schema(Map.of(
+                                "keyword", stringProp("Field, tag, or measurement keyword"),
+                                "limit", integerProp("Maximum matches, default 100, max 500")),
+                                List.of("keyword"))),
+                tool("getMetricCatalog",
+                        "Get DataBuff measurement-to-table, tag, and field mappings",
+                        schema(Map.of("measurement", stringProp("Optional exact measurement")))),
+                tool("queryDorisBusinessData",
+                        "Execute one bounded read-only SQL statement against DataBuff Doris. Prefer structured tools first",
+                        schema(Map.of(
+                                "sql", stringProp("SELECT/SHOW/DESCRIBE/DESC/EXPLAIN/WITH statement"),
+                                "maxRows", integerProp("Maximum rows, default 200, hard cap 1000")),
+                                List.of("sql"))),
+                tool("querySelfMonitorMetrics",
+                        "Query DataBuff platform self-monitoring metrics for ingest, web, Doris, and pipeline health",
+                        selfMonitorSchema()),
+                tool("prometheus_query",
+                        "Execute a read-only Prometheus instant PromQL query through DataBuff",
+                        schema(Map.of(
+                                "query", stringProp("PromQL expression"),
+                                "time", stringProp("Optional evaluation timestamp")),
+                                List.of("query"))),
+                tool("prometheus_query_range",
+                        "Execute a read-only Prometheus range PromQL query through DataBuff",
+                        schema(Map.of(
+                                "query", stringProp("PromQL expression"),
+                                "start", stringProp("Start timestamp accepted by Prometheus"),
+                                "end", stringProp("End timestamp accepted by Prometheus"),
+                                "step", stringProp("Resolution, for example 60s")),
+                                List.of("query", "start", "end", "step"))),
+                tool("prometheus_series",
+                        "Discover Prometheus time series and labels through DataBuff",
+                        schema(Map.of(
+                                "match", stringArrayProp("One or more series selectors"),
+                                "start", stringProp("Optional start timestamp"),
+                                "end", stringProp("Optional end timestamp")),
+                                List.of("match"))),
+                tool("prometheus_metadata",
+                        "Read Prometheus metric metadata through DataBuff",
+                        schema(Map.of(
+                                "metric", stringProp("Optional metric name"),
+                                "limit", integerProp("Optional result limit, max 10000")))));
     }
 
     public List<McpToolDefinition> listTools() {
@@ -144,6 +195,25 @@ public class McpToolCatalog {
         return props;
     }
 
+    private static Map<String, Object> selfMonitorSchema() {
+        return schema(Map.ofEntries(
+                Map.entry("fromTime", stringProp("Required start time, yyyy-MM-dd HH:mm:ss")),
+                Map.entry("toTime", stringProp("Required end time, yyyy-MM-dd HH:mm:ss")),
+                Map.entry("mode", stringProp("series, summary, or list")),
+                Map.entry("metrics", stringArrayProp("Exact platform metric names")),
+                Map.entry("metricPrefixes", stringArrayProp("Metric prefixes")),
+                Map.entry("metricSuffixes", stringArrayProp("Metric suffixes")),
+                Map.entry("components", stringArrayProp("ingest and/or web")),
+                Map.entry("instances", stringArrayProp("Instance filters")),
+                Map.entry("dims", stringArrayProp("Dimension filters")),
+                Map.entry("groupBy", stringProp("Comma-separated grouping columns")),
+                Map.entry("value", stringProp("cnt, avg, gauge, auto, sum, max, or min")),
+                Map.entry("stepSeconds", integerProp("Series resolution")),
+                Map.entry("tag", stringProp("List-mode tag")),
+                Map.entry("limit", integerProp("List-mode limit"))),
+                List.of("fromTime", "toTime"));
+    }
+
     private static String implementationFor(String name) {
         return switch (name) {
             case "getCurrentTimeRange" -> "commonTools.getCurrentTimeRange";
@@ -161,6 +231,16 @@ public class McpToolCatalog {
             case "queryLogsByTraceId" -> "logTools.queryLogsByTraceId";
             case "queryLogsBySpanId" -> "logTools.queryLogsBySpanId";
             case "inspectService" -> "inspectTools.inspectService";
+            case "listDataTables" -> "dataCatalogTools.listDataTables";
+            case "getTableSchema" -> "dataCatalogTools.getTableSchema";
+            case "searchDataFields" -> "dataCatalogTools.searchDataFields";
+            case "getMetricCatalog" -> "dataCatalogTools.getMetricCatalog";
+            case "queryDorisBusinessData" -> "platformTools.queryDorisBusinessData";
+            case "querySelfMonitorMetrics" -> "platformTools.querySelfMonitorMetrics";
+            case "prometheus_query" -> "prometheusMcp.query";
+            case "prometheus_query_range" -> "prometheusMcp.queryRange";
+            case "prometheus_series" -> "prometheusMcp.series";
+            case "prometheus_metadata" -> "prometheusMcp.metadata";
             default -> throw new IllegalArgumentException("unknown MCP tool: " + name);
         };
     }

@@ -15,17 +15,20 @@
   //   Remote / custom port:  http://<your-databuff-host>:<port>/mcp
   //
   // Authentication
-  //   MVP has no dedicated MCP API token — same as the platform AI APIs.
-  //   Use on intranet/VPN; add your own gateway or firewall for public exposure.
-  //   If you add a gateway later, use the optional headers block below.
+  //   Test: APM_MCP_AUTH_REQUIRED=false, no header required.
+  //   Production: APM_MCP_AUTH_REQUIRED=true and configure a DataBuff bearer token.
   //
-  // Available MCP tools (15 — discovered automatically via tools/list after connect)
+  // Available MCP tools (25 — discovered automatically via tools/list after connect)
   //   General:    getCurrentTimeRange, getTimeRangeAroundTime, drawTrendCharts
   //   Query:      queryServicesAll, queryServicesByServiceType, queryServiceTopology,
   //               queryTraceListByCondition, queryTraceDetail, queryServiceAlarms,
   //               queryMetricData
   //   Logs:       queryLogTrend, queryLogDetail, queryLogsByTraceId, queryLogsBySpanId
   //   Inspection: inspectService
+  //   Schema:     listDataTables, getTableSchema, searchDataFields, getMetricCatalog
+  //   Platform:   queryDorisBusinessData, querySelfMonitorMetrics
+  //   Prometheus: prometheus_query, prometheus_query_range, prometheus_series,
+  //               prometheus_metadata
   //
   // Verify
   //   Cursor → Settings → MCP → databuff-apm should show as connected.

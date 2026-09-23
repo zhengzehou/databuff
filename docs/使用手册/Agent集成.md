@@ -18,14 +18,14 @@
 
 1. **DataBuff 已部署**且 Agent 所在环境能访问 Web 端口（默认见安装文档）。
 2. **MCP 端点已实现**：`GET/POST http://<host>:<port>/mcp`（Streamable HTTP，MCP 规范标准路径）。
-3. **网络安全**：MVP **无独立 MCP API Token**，与现有 AI API 一致，依赖内网 / VPN / 反向代理隔离；公网暴露请自行加网关或防火墙。
+3. **网络安全**：生产环境设置 `APM_MCP_AUTH_REQUIRED=true`，通过 DataBuff Bearer Token 调用；隔离测试环境可显式设置为 `false`。
 4. **仓库资源**：集成包位于 `integrations/agent/`（Skills + MCP 配置示例）。
 
 ---
 
 ## ① 配置 MCP
 
-复制示例配置，将 `YOUR_DATABUFF_HOST:PORT` 换成实际地址即可，**无需** `Authorization` 头或 API Token。
+复制示例配置并将 `YOUR_DATABUFF_HOST:PORT` 换成实际地址。测试模式不需要 Token；生产模式需配置 `Authorization: Bearer <DataBuff Token>`。
 
 ### Cursor
 
@@ -50,7 +50,7 @@ http://localhost:27403/mcp
 
 将 `integrations/agent/mcp/claude-desktop-config.example.json` 合并进 `claude_desktop_config.json` 的 `mcpServers` 段，同样使用 `/mcp` URL。在 Claude Desktop **Settings → Developer** 中确认 `databuff-apm` 出现在 MCP 服务列表。
 
-### 暴露的工具（15 个）
+### 暴露的工具（25 个）
 
 | 类别 | MCP 工具名 |
 |------|------------|
@@ -58,6 +58,9 @@ http://localhost:27403/mcp
 | 问数 | `queryServicesAll`、`queryServicesByServiceType`、`queryServiceTopology`、`queryTraceListByCondition`、`queryTraceDetail`、`queryServiceAlarms`、`queryMetricData` |
 | 日志 | `queryLogTrend`、`queryLogDetail`、`queryLogsByTraceId`、`queryLogsBySpanId` |
 | 巡检 | `inspectService` |
+| Schema | `listDataTables`、`getTableSchema`、`searchDataFields`、`getMetricCatalog` |
+| Doris / 自监控 | `queryDorisBusinessData`、`querySelfMonitorMetrics` |
+| Prometheus | `prometheus_query`、`prometheus_query_range`、`prometheus_series`、`prometheus_metadata` |
 
 旧版仅支持 HTTP+SSE 握手的客户端可尝试 `http://<host>:<port>/sse`（可选实现，非文档主推路径）。
 
@@ -128,7 +131,8 @@ cp -r integrations/agent/skills/* ~/.cursor/skills/
 | Agent 不调工具 | 确认 MCP 已连接；安装对应 Skill；新开一条对话 |
 | 问数口径不对 | 确认已安装 `skill.data.metrics`；重启客户端加载 Skills |
 | 与平台 UI 专家行为不一致 | 外部走 MCP；平台内走 JAVA_BEAN + 专家绑定，两套通路设计如此 |
-| 公网安全风险 | MVP 无 Token，仅建议内网使用；认证能力规划在后续版本 |
+| 返回 `DATABUFF_LOGIN_REQUIRED` | 登录已过期或生产环境未传 DataBuff Bearer Token |
+| 测试环境免认证 | 设置 `APM_MCP_AUTH_REQUIRED=false`；生产环境必须设为 `true` |
 
 传输协议：**Streamable HTTP** 使用 `/mcp`；旧版 **HTTP+SSE** 使用 `/sse`（可选）。
 

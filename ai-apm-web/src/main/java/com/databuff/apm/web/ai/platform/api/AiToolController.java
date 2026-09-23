@@ -4,6 +4,7 @@ import com.databuff.apm.web.ai.mcp.standard.JavaBeanToolExecutor;
 import com.databuff.apm.web.ai.platform.AiPlatformApiException;
 import com.databuff.apm.web.ai.platform.expert.ExpertManagementService;
 import com.databuff.apm.web.ai.platform.runtime.RemoteMcpToolRegistrar;
+import com.databuff.apm.web.ai.platform.runtime.PrometheusToolProvider;
 import com.databuff.apm.web.ai.platform.tool.AiToolDefinition;
 import com.databuff.apm.web.ai.platform.tool.JavaBeanToolAllowlist;
 import com.databuff.apm.web.ai.platform.tool.ToolManagementService;
@@ -38,6 +39,8 @@ public class AiToolController {
     private JavaBeanToolExecutor javaBeanToolExecutor;
     @Autowired
     private RemoteMcpToolRegistrar remoteMcpToolRegistrar;
+    @Autowired
+    private PrometheusToolProvider prometheusToolProvider;
     @Autowired
     private ObjectMapper objectMapper;
 
@@ -113,6 +116,9 @@ public class AiToolController {
         if (tool.type() == ToolType.MCP) {
             return probeMcp(tool, body);
         }
+        if (tool.type() == ToolType.PROMETHEUS) {
+            return prometheusToolProvider.probe(tool, body);
+        }
         if (tool.type() != ToolType.JAVA_BEAN) {
             throw AiPlatformApiException.badRequest("unsupported tool type for test: " + tool.type());
         }
@@ -166,6 +172,17 @@ public class AiToolController {
         if (type == ToolType.JAVA_BEAN && !JavaBeanToolAllowlist.isAllowed(request.implementation())) {
             throw AiPlatformApiException.badRequest(
                     "JAVA_BEAN implementation must be allowlisted: " + JavaBeanToolAllowlist.implementations());
+        }
+        if (type == ToolType.PROMETHEUS) {
+            // Parse eagerly so invalid URLs or JSON are rejected when saving, not during a chat.
+            try {
+                prometheusToolProvider.create(new AiToolDefinition(
+                        request.toolId(), request.name(), request.category(), request.description(), type,
+                        request.implementation(), request.schemaJson(), request.configJson(), true, false,
+                        0, createdAt, Instant.now()));
+            } catch (IllegalArgumentException e) {
+                throw AiPlatformApiException.badRequest("invalid Prometheus configuration: " + e.getMessage());
+            }
         }
         Instant now = Instant.now();
         return new AiToolDefinition(

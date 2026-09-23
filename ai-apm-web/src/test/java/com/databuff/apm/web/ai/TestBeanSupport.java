@@ -17,6 +17,7 @@ import com.databuff.apm.web.ai.agent.AiRuntimeRouter;
 import com.databuff.apm.web.ai.agent.AiSessionStore;
 import com.databuff.apm.web.ai.agent.AgentRuntimeConfig;
 import com.databuff.apm.web.ai.mcp.standard.JavaBeanToolExecutor;
+import com.databuff.apm.web.ai.mcp.standard.PrometheusMcpFacade;
 import com.databuff.apm.web.ai.platform.api.AiToolController;
 import com.databuff.apm.web.ai.platform.capability.CapabilityManagementService;
 import com.databuff.apm.web.ai.platform.expert.ExpertManagementService;
@@ -24,6 +25,7 @@ import com.databuff.apm.web.ai.platform.runtime.AgentScopeToolFactory;
 import com.databuff.apm.web.ai.platform.runtime.ExpertRuntimeRegistry;
 import com.databuff.apm.web.ai.platform.runtime.SessionExpertRuntimeRegistry;
 import com.databuff.apm.web.ai.platform.runtime.RemoteMcpToolRegistrar;
+import com.databuff.apm.web.ai.platform.runtime.PrometheusToolProvider;
 import com.databuff.apm.web.ai.platform.runtime.SessionWorkspaceService;
 import com.databuff.apm.web.ai.platform.skill.SkillManagementService;
 import com.databuff.apm.web.ai.platform.task.ExpertDispatchTool;
@@ -36,6 +38,7 @@ import com.databuff.apm.web.portal.ServicePortalService;
 import com.databuff.apm.web.portal.TracePortalService;
 import com.databuff.apm.web.tools.local.CommonTools;
 import com.databuff.apm.web.tools.local.DataTools;
+import com.databuff.apm.web.tools.local.DataCatalogTools;
 import com.databuff.apm.web.tools.local.InspectTools;
 import com.databuff.apm.web.tools.local.LogTools;
 import com.databuff.apm.web.tools.local.PlatformTools;
@@ -194,6 +197,7 @@ public final class TestBeanSupport {
         setField(factory, "inspectTools", inspectTools);
         setField(factory, "expertDispatchTool", expertDispatchTool);
         setField(factory, "remoteMcpToolRegistrar", new RemoteMcpToolRegistrar(new ObjectMapper()));
+        setField(factory, "prometheusToolProvider", new PrometheusToolProvider(new ObjectMapper()));
         return factory;
     }
 
@@ -247,6 +251,7 @@ public final class TestBeanSupport {
         setField(controller, "javaBeanToolExecutor", javaBeanToolExecutor(
                 dataTools, timeTool, objectMapper));
         setField(controller, "remoteMcpToolRegistrar", new RemoteMcpToolRegistrar(objectMapper));
+        setField(controller, "prometheusToolProvider", new PrometheusToolProvider(objectMapper));
         setField(controller, "objectMapper", objectMapper);
         return controller;
     }
@@ -262,6 +267,8 @@ public final class TestBeanSupport {
                 mock(LogTools.class),
                 timeTool,
                 mock(PlatformTools.class),
+                mock(DataCatalogTools.class),
+                mock(PrometheusMcpFacade.class),
                 objectMapper);
     }
 
