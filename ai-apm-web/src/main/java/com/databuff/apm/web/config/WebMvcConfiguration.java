@@ -55,7 +55,7 @@ public class WebMvcConfiguration implements WebMvcConfigurer {
 
         registry.addInterceptor(mcpAuthInterceptor)
                 .addPathPatterns(
-                        "/mcp",
+                        "/webapi/mcp",
                         "/webapi/api/v1/dsh/auth/status");
     }
 

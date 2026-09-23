@@ -11,7 +11,7 @@ import java.util.Map;
 /**
  * Legacy demo MCP endpoint backing {@code /api/v1/mcp/*}.
  *
- * @deprecated Use the standard MCP Server at {@code POST /mcp} instead.
+ * @deprecated Use the standard MCP Server at {@code POST /webapi/mcp} instead.
  */
 @Deprecated
 @Service

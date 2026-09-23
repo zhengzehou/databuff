@@ -93,14 +93,14 @@ class McpStreamableHttpControllerTest {
     void httpTransportNegotiatesNotificationAndUnsupportedSseGet() throws Exception {
         MockMvc http = MockMvcBuilders.standaloneSetup(controller).build();
 
-        http.perform(post("/mcp")
+        http.perform(post("/webapi/mcp")
                         .contentType("application/json")
                         .accept("application/json", "text/event-stream")
                         .content("{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}"))
                 .andExpect(status().isAccepted())
                 .andExpect(content().string(""));
 
-        http.perform(get("/mcp").accept("text/event-stream"))
+        http.perform(get("/webapi/mcp").accept("text/event-stream"))
                 .andExpect(status().isMethodNotAllowed())
                 .andExpect(header().string("Allow", "POST"))
                 .andExpect(content().string(""));

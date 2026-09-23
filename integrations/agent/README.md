@@ -56,10 +56,8 @@ cp integrations/agent/mcp/cursor-mcp-example.json .cursor/mcp.json
 标准 MCP 端点（Streamable HTTP，实现后）：
 
 ```
-http://<your-databuff-host>:<port>/mcp
+http://<your-databuff-host>:<port>/webapi/mcp
 ```
-
-旧版仅支持 HTTP+SSE 的客户端可尝试 `http://<host>:<port>/sse`（可选实现，见方案设计）。
 
 ### 3. 验证
 

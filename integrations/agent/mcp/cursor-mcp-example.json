@@ -10,9 +10,9 @@
   //   3. Restart Cursor (or reload MCP under Settings → MCP)
   //   4. Install Skills from integrations/agent/skills/ (see integrations/agent/README.md)
   //
-  // Endpoint (Streamable HTTP, MCP standard path /mcp)
-  //   Local Docker default:  http://localhost:27403/mcp
-  //   Remote / custom port:  http://<your-databuff-host>:<port>/mcp
+  // Endpoint (Streamable HTTP)
+  //   Local Docker default:  http://localhost:27403/webapi/mcp
+  //   Remote / custom port:  http://<your-databuff-host>:<port>/webapi/mcp
   //
   // Authentication
   //   Test: APM_MCP_AUTH_REQUIRED=false, no header required.
@@ -39,7 +39,7 @@
 
   "mcpServers": {
     "databuff-apm": {
-      "url": "http://localhost:27403/mcp"
+      "url": "http://localhost:27403/webapi/mcp"
     }
   }
 }

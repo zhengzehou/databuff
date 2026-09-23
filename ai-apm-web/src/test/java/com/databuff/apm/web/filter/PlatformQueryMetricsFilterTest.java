@@ -22,8 +22,8 @@ class PlatformQueryMetricsFilterTest {
             "/webapi/business/overview, portal",
             "/webapi/globalTopology/graph, portal",
             "/webapi/user/login, other",
-            "/mcp, ai",
-            "/mcp/sse, ai"
+            "/webapi/mcp, ai",
+            "/webapi/mcp/sse, ai"
     })
     void resolveDomainMapsPathPrefix(String path, String expected) {
         assertThat(PlatformQueryMetricsFilter.resolveDomain(path)).isEqualTo(expected);

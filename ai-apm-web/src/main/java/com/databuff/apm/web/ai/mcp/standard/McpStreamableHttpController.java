@@ -21,7 +21,7 @@ public class McpStreamableHttpController {
     }
 
     @PostMapping(
-            value = "/mcp",
+            value = "/webapi/mcp",
             consumes = MediaType.APPLICATION_JSON_VALUE,
             produces = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<?> post(@RequestBody Map<String, Object> body) {
@@ -31,7 +31,7 @@ public class McpStreamableHttpController {
         return ResponseEntity.ok(jsonRpcService.handle(body));
     }
 
-    @GetMapping("/mcp")
+    @GetMapping("/webapi/mcp")
     public ResponseEntity<Void> get() {
         return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
                 .allow(HttpMethod.POST)

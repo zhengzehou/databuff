@@ -17,7 +17,7 @@ class McpAuthInterceptorTest {
     void disabledAuthUsesExplicitTestIdentity() throws Exception {
         McpAuthInterceptor interceptor = new McpAuthInterceptor(
                 tokenService, new McpAuthProperties(false, "integration-test"));
-        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/mcp");
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/webapi/mcp");
         MockHttpServletResponse response = new MockHttpServletResponse();
 
         assertThat(interceptor.preHandle(request, response, new Object())).isTrue();
@@ -29,7 +29,7 @@ class McpAuthInterceptorTest {
     void requiredAuthRejectsMissingToken() throws Exception {
         McpAuthInterceptor interceptor = new McpAuthInterceptor(
                 tokenService, new McpAuthProperties(true, "test"));
-        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/mcp");
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/webapi/mcp");
         MockHttpServletResponse response = new MockHttpServletResponse();
 
         assertThat(interceptor.preHandle(request, response, new Object())).isFalse();
@@ -41,7 +41,7 @@ class McpAuthInterceptorTest {
     void requiredAuthAcceptsValidBearerToken() throws Exception {
         McpAuthInterceptor interceptor = new McpAuthInterceptor(
                 tokenService, new McpAuthProperties(true, "test"));
-        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/mcp");
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/webapi/mcp");
         request.addHeader("Authorization", "Bearer " + tokenService.issueToken("alice"));
         MockHttpServletResponse response = new MockHttpServletResponse();
 

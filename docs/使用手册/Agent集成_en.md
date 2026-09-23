@@ -17,7 +17,7 @@ Connect external AI agents — **Cursor, Claude Code, OpenClaw/AMC** — to Data
 ## Prerequisites
 
 1. **DataBuff is deployed** and reachable from the agent environment (default Web port per install docs).
-2. **MCP endpoint is available**: `GET/POST http://<host>:<port>/mcp` (Streamable HTTP, MCP standard path).
+2. **MCP endpoint is available**: `POST http://<host>:<port>/webapi/mcp` (Streamable HTTP).
 3. **Network security**: MVP has **no dedicated MCP API Token** — same as existing AI APIs; use intranet / VPN / reverse proxy. Add your own gateway/firewall for public exposure.
 4. **Repo assets**: integration package at `integrations/agent/` (Skills + MCP config examples).
 
@@ -39,16 +39,16 @@ cp integrations/agent/mcp/cursor-mcp-example.json .cursor/mcp.json
 Default local address (Docker install):
 
 ```
-http://localhost:27403/mcp
+http://localhost:27403/webapi/mcp
 ```
 
-For remote or non-default ports, set `url` to `http://<your-databuff-host>:<port>/mcp`.
+For remote or non-default ports, set `url` to `http://<your-databuff-host>:<port>/webapi/mcp`.
 
-In **Cursor → Settings → MCP**, `databuff-apm` should appear connected; confirm `url` is `http://<host>:<port>/mcp` with no `Authorization` header.
+In **Cursor → Settings → MCP**, `databuff-apm` should appear connected; confirm `url` is `http://<host>:<port>/webapi/mcp`.
 
 ### Claude Code / Claude Desktop
 
-Merge `integrations/agent/mcp/claude-desktop-config.example.json` into `claude_desktop_config.json` under `mcpServers`, same `/mcp` URL. In Claude Desktop **Settings → Developer**, confirm `databuff-apm` appears in the MCP server list.
+Merge `integrations/agent/mcp/claude-desktop-config.example.json` into `claude_desktop_config.json` under `mcpServers`, using the same `/webapi/mcp` URL. In Claude Desktop **Settings → Developer**, confirm `databuff-apm` appears in the MCP server list.
 
 ### Exposed tools (15)
 
@@ -58,8 +58,6 @@ Merge `integrations/agent/mcp/claude-desktop-config.example.json` into `claude_d
 | Query | `queryServicesAll`, `queryServicesByServiceType`, `queryServiceTopology`, `queryTraceListByCondition`, `queryTraceDetail`, `queryServiceAlarms`, `queryMetricData` |
 | Logs | `queryLogTrend`, `queryLogDetail`, `queryLogsByTraceId`, `queryLogsBySpanId` |
 | Inspection | `inspectService` |
-
-Clients that only support legacy HTTP+SSE handshake may try `http://<host>:<port>/sse` (optional, not the primary documented path).
 
 ---
 
@@ -113,7 +111,7 @@ On success, the tool-call panel should show MCP tool names such as `queryService
 
 This repo provides `integrations/agent/mcp/openclaw-amc-config.example.json` as reference — **no automated zip build** for marketplace upload. To package manually:
 
-1. Set `mcp.url` in `config.json` to `http://<host>:<port>/mcp`
+1. Set `mcp.url` in `config.json` to `http://<host>:<port>/webapi/mcp`
 2. Copy `integrations/agent/skills/` into package `skills/`
 3. Zip and upload per AMC docs (format per OpenOcta marketplace spec)
 
@@ -123,14 +121,14 @@ This repo provides `integrations/agent/mcp/openclaw-amc-config.example.json` as 
 
 | Symptom | Fix |
 |---------|-----|
-| MCP connection failed | Verify `http://host:port/mcp` reachable; confirm ai-apm-web is up with new standard endpoint |
+| MCP connection failed | Verify `http://host:port/webapi/mcp` reachable; confirm ai-apm-web is up with the new endpoint |
 | Empty tool list | Check `tools/list` response; do not use deprecated `/api/v1/mcp/*` stubs |
 | Agent does not call tools | Ensure MCP connected; install skills; start a new chat |
 | Wrong query semantics | Install `skill.data.metrics`; restart client to load skills |
 | Differs from platform UI experts | External = MCP; platform = JAVA_BEAN + expert binding — by design |
 | Public exposure risk | MVP has no token — use intranet only; auth planned for later |
 
-Transport: **Streamable HTTP** → `/mcp`; legacy **HTTP+SSE** → `/sse` (optional).
+Transport: the DataBuff MCP service uses **Streamable HTTP** at `/webapi/mcp`.
 
 ---
 

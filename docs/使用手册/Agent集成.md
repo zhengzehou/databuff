@@ -17,7 +17,7 @@
 ## 前提
 
 1. **DataBuff 已部署**且 Agent 所在环境能访问 Web 端口（默认见安装文档）。
-2. **MCP 端点已实现**：`GET/POST http://<host>:<port>/mcp`（Streamable HTTP，MCP 规范标准路径）。
+2. **MCP 端点已实现**：`POST http://<host>:<port>/webapi/mcp`（Streamable HTTP）。
 3. **网络安全**：生产环境设置 `APM_MCP_AUTH_REQUIRED=true`，通过 DataBuff Bearer Token 调用；隔离测试环境可显式设置为 `false`。
 4. **仓库资源**：集成包位于 `integrations/agent/`（Skills + MCP 配置示例）。
 
@@ -39,16 +39,16 @@ cp integrations/agent/mcp/cursor-mcp-example.json .cursor/mcp.json
 默认本地地址（Docker 安装）：
 
 ```
-http://localhost:27403/mcp
+http://localhost:27403/webapi/mcp
 ```
 
-远程或非默认端口时，将 `url` 改为 `http://<your-databuff-host>:<port>/mcp`。
+远程或非默认端口时，将 `url` 改为 `http://<your-databuff-host>:<port>/webapi/mcp`。
 
-**Cursor → Settings → MCP** 中应出现 `databuff-apm` 服务且状态为已连接；确认 `url` 为 `http://<host>:<port>/mcp`（无 `Authorization` 头）。
+**Cursor → Settings → MCP** 中应出现 `databuff-apm` 服务且状态为已连接；确认 `url` 为 `http://<host>:<port>/webapi/mcp`。
 
 ### Claude Code / Claude Desktop
 
-将 `integrations/agent/mcp/claude-desktop-config.example.json` 合并进 `claude_desktop_config.json` 的 `mcpServers` 段，同样使用 `/mcp` URL。在 Claude Desktop **Settings → Developer** 中确认 `databuff-apm` 出现在 MCP 服务列表。
+将 `integrations/agent/mcp/claude-desktop-config.example.json` 合并进 `claude_desktop_config.json` 的 `mcpServers` 段，同样使用 `/webapi/mcp` URL。在 Claude Desktop **Settings → Developer** 中确认 `databuff-apm` 出现在 MCP 服务列表。
 
 ### 暴露的工具（25 个）
 
@@ -61,8 +61,6 @@ http://localhost:27403/mcp
 | Schema | `listDataTables`、`getTableSchema`、`searchDataFields`、`getMetricCatalog` |
 | Doris / 自监控 | `queryDorisBusinessData`、`querySelfMonitorMetrics` |
 | Prometheus | `prometheus_query`、`prometheus_query_range`、`prometheus_series`、`prometheus_metadata` |
-
-旧版仅支持 HTTP+SSE 握手的客户端可尝试 `http://<host>:<port>/sse`（可选实现，非文档主推路径）。
 
 ---
 
@@ -116,7 +114,7 @@ cp -r integrations/agent/skills/* ~/.cursor/skills/
 
 本仓库提供参考配置 `integrations/agent/mcp/openclaw-amc-config.example.json`，**不自动打包** zip 上传市场。自行打包时：
 
-1. 将 `config.json` 中 `mcp.url` 设为 `http://<host>:<port>/mcp`
+1. 将 `config.json` 中 `mcp.url` 设为 `http://<host>:<port>/webapi/mcp`
 2. 将 `integrations/agent/skills/` 拷入包内 `skills/`
 3. 按 AMC 文档压缩并上传（具体格式以 OpenOcta 市场规范为准）
 
@@ -126,7 +124,7 @@ cp -r integrations/agent/skills/* ~/.cursor/skills/
 
 | 现象 | 处理 |
 |------|------|
-| MCP 连接失败 | 核对 `http://host:port/mcp` 可达；确认 ai-apm-web 已启动且实现新标准端点 |
+| MCP 连接失败 | 核对 `http://host:port/webapi/mcp` 可达；确认 ai-apm-web 已启动且实现新端点 |
 | 工具列表为空 | 检查 `tools/list` 响应；勿使用已废弃的 `/api/v1/mcp/*` 桩端点 |
 | Agent 不调工具 | 确认 MCP 已连接；安装对应 Skill；新开一条对话 |
 | 问数口径不对 | 确认已安装 `skill.data.metrics`；重启客户端加载 Skills |
@@ -134,7 +132,7 @@ cp -r integrations/agent/skills/* ~/.cursor/skills/
 | 返回 `DATABUFF_LOGIN_REQUIRED` | 登录已过期或生产环境未传 DataBuff Bearer Token |
 | 测试环境免认证 | 设置 `APM_MCP_AUTH_REQUIRED=false`；生产环境必须设为 `true` |
 
-传输协议：**Streamable HTTP** 使用 `/mcp`；旧版 **HTTP+SSE** 使用 `/sse`（可选）。
+传输协议：DataBuff MCP 服务使用 **Streamable HTTP**，端点为 `/webapi/mcp`。
 
 ---
 

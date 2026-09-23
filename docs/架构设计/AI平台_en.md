@@ -114,7 +114,7 @@ AI is not a separate system — it grows directly on APM data. That means:
 ## Open Ecosystem
 
 - **Multi-model support**: OpenAI-compatible, Anthropic, and other mainstream LLMs
-- **MCP protocol**: External agents (e.g. Cursor, Claude) can call platform APM tools via standard `/mcp`; the platform can also act as MCP client to external MCP services
+- **MCP protocol**: External agents (e.g. Cursor, Claude) can call platform APM tools via `/webapi/mcp`; the platform can also act as MCP client to external MCP services
 - **Customizable Skills**: Built-in skills can be overridden; extend for business scenarios
 
 For external agents connecting to DataBuff as MCP Server, see [User Guide · Agent Integration](../使用手册/Agent集成_en.md). For external MCP inside the platform and custom Brain-routable experts, see [Custom Digital Experts](../使用手册/自定义数字专家_en.md) and [External MCP Integration](../使用手册/外部MCP集成_en.md).

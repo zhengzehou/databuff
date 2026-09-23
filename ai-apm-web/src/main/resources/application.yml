@@ -72,7 +72,7 @@ apm:
     enabled: ${APM_PROMETHEUS_ENABLED:true}
     base-url: ${APM_PROMETHEUS_BASE_URL:https://opt.uletm.com/prometheus}
     # Use the historical source when the requested time is at or before seven days ago.
-    historical-base-url: ${APM_PROMETHEUS_HISTORICAL_BASE_URL:http://opt3.beta.uletm.com/prometheus/206204}
+    historical-base-url: ${APM_PROMETHEUS_HISTORICAL_BASE_URL:http://opt3.uletm.com/prometheus/206204}
     historical-api-prefix: ${APM_PROMETHEUS_HISTORICAL_API_PREFIX:/api/v1}
     api-prefix: ${APM_PROMETHEUS_API_PREFIX:/api/v1}
     job: ${APM_PROMETHEUS_JOB:}
@@ -116,6 +116,11 @@ apm:
     lookback-minutes: 15
     provider:
       mask-api-key: true
+  mcp:
+    auth:
+      # Production: true. Isolated test environments may disable it explicitly.
+      required: ${APM_MCP_AUTH_REQUIRED:false}
+      test-username: ${APM_MCP_TEST_USERNAME:dsh-test-user}
   agent:
     agentscope-enabled: ${APM_AGENT_AGENTSCOPE_ENABLED:true}
     builtin-skills-dir: ${APM_BUILTIN_SKILLS_DIR:../deploy/common/skills}

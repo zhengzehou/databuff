@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "databuff-apm": {
-      "url": "http://localhost:27403/mcp"
+      "url": "http://localhost:27403/webapi/mcp"
     }
   }
 }
