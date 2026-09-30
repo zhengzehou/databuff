@@ -320,7 +320,7 @@ public class TracePortalService {
                 case "status" -> data.put("status", Map.of("0", 1, "1", 1));
                 case "service" -> data.put("service", readRepository.queryStringMap(
                         MetricQueryBuilder.metricServiceNameIdMapSql(
-                                metricDatabase, table, from, to, extraFilters, 500),
+                                metricDatabase, table, from, to, extraFilters, 1000),
                         "map_key",
                         "map_value"));
                 case "srcService" -> data.put("srcService", loadSrcServiceFacetMap(table, from, to, extraFilters));
