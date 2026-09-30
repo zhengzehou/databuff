@@ -337,7 +337,7 @@ public final class LogQueryBuilder {
             appendIn(sql, "severity", severities);
         }
         if (query != null && !query.isBlank()) {
-            sql.append(" AND body LIKE '%").append(escapeLike(query)).append("%'");
+            sql.append(" AND (service  LIKE '%").append(escapeLike(query)).append("%'").append(" OR body LIKE '%").append(escapeLike(query)).append("%')");
         }
     }
 
