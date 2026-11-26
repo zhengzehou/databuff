@@ -241,6 +241,7 @@ import { toAsyncWait } from '@/utils/common';
 import { v4 as uuidv4 } from 'uuid';
 import ChartGroup from './overviewChart.vue';
 import LogDetailDrawer from './logDetailDrawer.vue';
+import { DEFAULT_CHART_LIST_LIMIT, resolveRecentRangeFromCounts } from '@/utils/chartListRange';
 import { formatCompactTimeRange } from '@/utils/timeFormat';
 import {
   ERROR_SEVERITIES,
@@ -282,7 +283,7 @@ export default class LogsAnalysis extends Vue {
   private chartQueryLoading = false;
   private tableReady = false;
   private collapsed = false;
-  private activeFilterNames = ['service', 'severity'];
+  private activeFilterNames = ['service', 'serviceInstance', 'host', 'severity'];
   private refreshToken = 0;
   private refreshRetryTimer: number | null = null;
   private syncReloadSeq = 0;
@@ -318,6 +319,7 @@ export default class LogsAnalysis extends Vue {
     const params: Record<string, any> = {
       fromTimeNs: `${this.resolveTimeMillis(fromTime) * 1_000_000}`,
       toTimeNs: `${this.resolveTimeMillis(toTime) * 1_000_000}`,
+      size: DEFAULT_CHART_LIST_LIMIT,
       query: this.normalizeInputValue(this.queryText),
       traceId: this.normalizeInputValue(this.traceIdText),
       spanId: this.normalizeInputValue(this.spanIdText),
@@ -417,10 +419,24 @@ export default class LogsAnalysis extends Vue {
   }
 
   private async applyDefaultListFromChart () {
-    // 默认情况下按用户选择的全局时间范围查询列表，不再缩成"最近 N 条"窗口
+    const range = resolveRecentRangeFromCounts(this.$refs.chartGroup?.getVolumeCounts?.(), {
+      interval: this.timeParams.interval,
+      globalToTime: this.timeParams.toTime,
+      limit: DEFAULT_CHART_LIST_LIMIT,
+    });
+    if (!range) {
+      this.showList = false;
+      this.listScope = 'default';
+      this.selectedBucketLabel = '';
+      this.listTimeRange = { fromTimeNs: '', toTimeNs: '' };
+      return;
+    }
     this.listScope = 'default';
     this.selectedBucketLabel = '';
-    this.listTimeRange = { fromTimeNs: '', toTimeNs: '' };
+    this.listTimeRange = {
+      fromTimeNs: `${range.fromMs * 1_000_000}`,
+      toTimeNs: `${range.toMs * 1_000_000}`,
+    };
     this.showList = true;
     this.clearMinuteRoute();
     this.chartQueryLoading = true;

@@ -13,7 +13,7 @@ import java.io.IOException;
 
 /**
  * Records web API query volume, latency, and failures into {@link PlatformMetrics}.
- * Scoped to {@code /webapi/**}, including the standard MCP endpoint.
+ * Scoped to {@code /webapi/**} and standard MCP {@code /mcp}.
  */
 @Component
 public class PlatformQueryMetricsFilter extends OncePerRequestFilter {
@@ -41,12 +41,15 @@ public class PlatformQueryMetricsFilter extends OncePerRequestFilter {
         if (path == null) {
             return true;
         }
-        return !path.startsWith("/webapi/");
+        return !path.startsWith("/webapi/") && !path.equals("/mcp") && !path.startsWith("/mcp/");
     }
 
     static String resolveDomain(String path) {
         if (path == null || path.isBlank()) {
             return "other";
+        }
+        if (path.equals("/mcp") || path.startsWith("/mcp/")) {
+            return "ai";
         }
         String relative = path;
         if (relative.startsWith("/webapi/")) {
@@ -67,7 +70,7 @@ public class PlatformQueryMetricsFilter extends OncePerRequestFilter {
         if (relative.startsWith("alarm") || relative.startsWith("monitor")) {
             return "alarm";
         }
-        if (relative.equals("mcp") || relative.startsWith("mcp/") || relative.startsWith("api/v1/ai")) {
+        if (relative.startsWith("api/v1/ai")) {
             return "ai";
         }
         if (relative.startsWith("log")) {

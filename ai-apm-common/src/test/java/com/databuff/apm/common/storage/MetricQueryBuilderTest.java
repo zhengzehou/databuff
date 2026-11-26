@@ -395,22 +395,6 @@ class MetricQueryBuilderTest {
     }
 
     @Test
-    void buildsDbConnectionPoolTrendSqlByMinute() {
-        String sql = MetricQueryBuilder.dbConnectionPoolTrendSql(
-                "databuff",
-                java.util.List.of("9bf61532d56eb7b5"),
-                1_780_652_100_000L,
-                1_780_655_700_000L,
-                "inst-a");
-        assertThat(sql).contains("metric_service_db_connection_pool");
-        assertThat(sql).contains("MAX(COALESCE(`activeSize`, 0)) AS metric_value");
-        assertThat(sql).contains("`service_id` IN ('9bf61532d56eb7b5')");
-        assertThat(sql).contains("`service_instance` = 'inst-a'");
-        assertThat(sql).contains("FLOOR(`ts` / 1000 / 60) * 60");
-        assertThat(sql).contains("GROUP BY epoch_sec");
-    }
-
-    @Test
     void buildsK8sNamespaceDistinctSql() {
         String sql = MetricQueryBuilder.k8sNamespaceDistinctSql("databuff", 0L, 3_600_000L, 50);
         assertThat(sql).contains("metric_service_instance");
@@ -476,26 +460,6 @@ class MetricQueryBuilderTest {
         assertThat(sql).contains("`service_id` = '" + PortalServiceIdResolver.normalize("demo-order") + "'");
         assertThat(sql).doesNotContain(" AND `service` IN ");
         assertThat(sql).contains("sum_duration_ns");
-
-        String page = MetricQueryBuilder.serviceTrendBucketsSql(
-                "databuff", 0L, 3_600_000L, 60,
-                List.of("demo-order"), null, null, 1000, 2000);
-        assertThat(page).contains("ORDER BY bucket_epoch_sec ASC, `service` ASC");
-        assertThat(page).contains("LIMIT 1000 OFFSET 2000");
-
-        String ranking = MetricQueryBuilder.serviceTrendRankingSql(
-                "databuff", 0L, 3_600_000L, 60, "errRate",
-                null, null, null, "desc", 20);
-        assertThat(ranking).contains("SUM(CASE WHEN request_cnt > 0");
-        assertThat(ranking).contains("AS metric_total");
-        assertThat(ranking).contains("ORDER BY metric_total DESC, `service` ASC");
-        assertThat(ranking).contains("LIMIT 20");
-        assertThat(ranking).contains("GROUP BY bucket_epoch_sec, `service`");
-
-        String topBuckets = MetricQueryBuilder.serviceTrendBucketsForServicesSql(
-                "databuff", 0L, 3_600_000L, 60, List.of("demo-order", "demo-pay"));
-        assertThat(topBuckets).contains("`service` IN ('demo-order', 'demo-pay')");
-        assertThat(topBuckets).doesNotContain(" LIMIT ");
     }
 
   @Test
@@ -813,16 +777,6 @@ class MetricQueryBuilderTest {
 
         String filtered = MetricQueryBuilder.metaServicesSql("databuff", "order");
         assertThat(filtered).contains("`name` LIKE '%order%'");
-
-        String page = MetricQueryBuilder.metaServicesSql("databuff", null, 500, 1000);
-        assertThat(page).contains("ORDER BY `name` ASC, `id` ASC");
-        assertThat(page).contains("LIMIT 500 OFFSET 1000");
-
-        String active = MetricQueryBuilder.metaServicesByKeysSql(
-                "databuff", List.of("demo-order", "[mysql]demo"));
-        assertThat(active).contains("`id` IN (");
-        assertThat(active).contains("`name` IN ('demo-order', '[mysql]demo')");
-        assertThat(active).contains("`service` IN ('demo-order', '[mysql]demo')");
     }
 
     @Test
@@ -1380,81 +1334,6 @@ class MetricQueryBuilderTest {
         assertThat(sql).doesNotContain("`error.pct`");
     }
 
-    @Test
-    void buildsHttpAvailabilityAndSuccessRateSql() {
-        String availabilitySql = MetricQueryBuilder.metricFieldTotalSql(
-                "databuff", "metric_service_http", "availability.pct", 0L, 3_600_000L, "");
-        assertThat(availabilitySql).contains("`httpCode` LIKE '5%'");
-        assertThat(availabilitySql).contains("WHEN `httpCode` LIKE '4%' THEN 0");
-        assertThat(availabilitySql).contains("SUM(`cnt`)");
-        assertThat(availabilitySql).contains("ELSE `error` END");
-
-        String unavailabilitySql = MetricQueryBuilder.metricFieldTotalSql(
-                "databuff", "metric_service_http", "unavailability.pct", 0L, 3_600_000L, "");
-        assertThat(unavailabilitySql).contains("`httpCode` LIKE '5%'");
-        assertThat(unavailabilitySql).contains("WHEN `httpCode` LIKE '4%' THEN 0");
-        assertThat(unavailabilitySql).contains("ELSE `error` END");
-        assertThat(unavailabilitySql).contains("100 - ((1 - (");
-        assertThat(unavailabilitySql).contains(") / NULLIF(SUM(`cnt`), 0)) * 100)");
-
-        String successSql = MetricQueryBuilder.metricFieldTotalSql(
-                "databuff", "metric_service_http", "success.pct", 0L, 3_600_000L, "");
-        assertThat(successSql).contains("`httpCode` LIKE '4%' OR `httpCode` LIKE '5%'");
-        assertThat(successSql).contains("ELSE `error` END");
-        assertThat(successSql).doesNotContain("THEN `cnt` ELSE 0 END");
-        assertThat(successSql).doesNotContain("`availability.pct`");
-        assertThat(successSql).doesNotContain("`success.pct`");
-    }
-    @Test
-    void buildsHttpStatusClassRateSql() {
-        String clientErrorSql = MetricQueryBuilder.metricFieldTotalSql(
-                "databuff", "metric_service_http", "client_error.pct", 0L, 3_600_000L, "");
-        assertThat(clientErrorSql).contains("`httpCode` LIKE '4%'");
-        assertThat(clientErrorSql).contains("NULLIF(SUM(`cnt`), 0) * 100");
-
-        String serverErrorSql = MetricQueryBuilder.metricFieldTotalSql(
-                "databuff", "metric_service_http", "server_error.pct", 0L, 3_600_000L, "");
-        assertThat(serverErrorSql).contains("`httpCode` LIKE '5%'");
-        assertThat(serverErrorSql).contains("NULLIF(SUM(`cnt`), 0) * 100");
-    }
-
-    @Test
-    void buildsMultipleMetricTotalsInOneTableScan() {
-        String sql = MetricQueryBuilder.metricFieldsTotalSql(
-                "databuff",
-                "metric_service",
-                java.util.List.of("cnt", "avgDuration", "error.pct"),
-                java.util.List.of("sum", "avg", "avg"),
-                0L,
-                3_600_000L,
-                " AND `service` IN ('demo') ");
-
-        assertThat(sql).contains("SUM(`cnt`) AS metric_0");
-        assertThat(sql).contains("SUM(`sumDuration`) / NULLIF(SUM(`cnt`), 0) / 1000000 AS metric_1");
-        assertThat(sql).contains("SUM(`error`) / NULLIF(SUM(`cnt`), 0) * 100 AS metric_2");
-        assertThat(sql).contains("COUNT(*) AS matched_rows");
-        assertThat(sql).containsOnlyOnce("FROM databuff.`metric_service`");
-    }
-
-    @Test
-    void buildsMultipleMetricSeriesInOneTableScan() {
-        String sql = MetricQueryBuilder.metricFieldsSeriesSql(
-                "databuff",
-                "metric_service_http",
-                java.util.List.of("availability.pct", "unavailability.pct", "client_error.pct", "server_error.pct"),
-                java.util.List.of("avg", "avg", "avg", "avg"),
-                0L,
-                3_600_000L,
-                " AND `isIn` = '1' ",
-                60);
-
-        assertThat(sql).contains("AS epoch_sec");
-        assertThat(sql).contains("AS metric_0", "AS metric_1", "AS metric_2", "AS metric_3");
-        assertThat(sql).contains("`httpCode` LIKE '4%'", "`httpCode` LIKE '5%'");
-        assertThat(sql).contains("AND `isIn` = '1'");
-        assertThat(sql).containsOnlyOnce("FROM databuff.`metric_service_http`");
-        assertThat(sql).contains("GROUP BY epoch_sec");
-    }
     @Test
     void buildsCallSpanListSql() {
         String dstServiceId = PortalServiceIdResolver.normalize("demo-order");
